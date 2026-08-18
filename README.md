@@ -17,6 +17,22 @@ If the browser doesn't open on its own, go to <http://127.0.0.1:5173> manually.
 **Use Chrome or Edge.** They can record MP4 directly. Firefox falls back to `.webm`,
 which some apps won't accept.
 
+## Hosting it (Vercel, GitHub Pages, anywhere)
+
+The app is 100% client-side, so any static host works and everything still runs
+on the viewer's machine — files are never uploaded.
+
+`vercel.json` pins the deploy to a plain static serve of the repo root. Without
+it, Vercel finds no `package.json` and no framework, guesses at a build output
+directory that doesn't exist, and every route 404s.
+
+`server.js` is **not** used when hosted — it exists only so the local
+double-click workflow isn't on `file://`. Any https origin already satisfies the
+browser, so hosted deploys export video fine.
+
+Vercel project settings should read: Framework Preset **Other**, Build Command
+**empty**, Output Directory **empty**, Root Directory **`./`**.
+
 ## Using it
 
 1. **Music** — pick an audio file (mp3, wav, m4a…). It decodes and finds the beat
