@@ -37,8 +37,11 @@ Vercel project settings should read: Framework Preset **Other**, Build Command
 
 1. **Music** — pick an audio file (mp3, wav, m4a…). It decodes and finds the beat
    in well under a second; the detected BPM shows up under the picker.
-2. **Clips** — add images and videos, or drag them anywhere onto the page. Drag the
-   tiles to reorder, hit **Shuffle** to randomize, ✕ on a tile to remove it.
+2. **Clips** — add images and videos with the button, or drop them on that panel.
+   They keep the order you selected them in. Drag the tiles to reorder, hit
+   **Shuffle** to randomize, ✕ on a tile to remove one. Anything the browser
+   can't decode (HEVC `.mov` from an iPhone is the usual culprit) is reported
+   under the picker rather than silently becoming a black frame.
 3. **Preview** — press ▶ (or spacebar). Click anywhere on the waveform to scrub.
    The pink vertical lines are the cut points.
 4. **Export video** — renders and downloads an MP4 to your Downloads folder.

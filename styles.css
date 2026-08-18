@@ -149,16 +149,25 @@ button.primary {
 }
 button.ghost { background: transparent; }
 
-.filebtn {
-  display: block;
+.dropzone {
   border: 1px dashed var(--line);
   border-radius: 8px;
-  padding: 14px;
+  padding: 12px;
   text-align: center;
-  color: var(--dim);
-  cursor: pointer;
+  background: rgba(255, 255, 255, 0.015);
 }
-.filebtn:hover { border-color: var(--accent); color: var(--text); }
+.dropzone.over {
+  border-color: var(--accent);
+  background: rgba(255, 45, 120, 0.1);
+}
+.dropzone button { width: 100%; }
+.dz-name {
+  color: var(--text);
+  font-size: 12px;
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+.dz-sub { color: #6d7484; font-size: 11px; margin-top: 6px; }
 
 .row { display: flex; gap: 8px; margin-top: 8px; }
 .row button { flex: 1; }
@@ -291,17 +300,16 @@ button.wide { width: 100%; margin-top: 6px; font-size: 12px; }
   transition: width 0.2s linear;
 }
 
-.drophint {
-  position: fixed;
-  inset: 0;
-  background: rgba(255, 45, 120, 0.12);
-  border: 3px dashed var(--accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 22px;
-  z-index: 30;
-  pointer-events: none;
+.error {
+  color: #ff8095;
+  font-size: 12px;
+  text-align: left;
+  background: rgba(255, 45, 120, 0.08);
+  border: 1px solid rgba(255, 45, 120, 0.35);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 12px 0;
+  word-break: break-word;
 }
 
 @media (max-width: 1100px) {

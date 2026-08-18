@@ -19,23 +19,27 @@
       <!-- ------------------------------------------------ media panel --- -->
       <aside class="panel">
         <h2>1 · Music</h2>
-        <label class="filebtn">
+        <div class="dropzone" id="audioZone">
           <input type="file" id="audioInput" accept="audio/*" hidden />
-          <span id="audioLabel">Choose an audio file…</span>
-        </label>
+          <div class="dz-name" id="audioLabel">No song loaded</div>
+          <button type="button" id="audioPick">Select audio file</button>
+          <div class="dz-sub">or drop one here</div>
+        </div>
         <div id="analyzeState" class="hint"></div>
 
         <h2>2 · Clips &amp; photos</h2>
-        <label class="filebtn">
+        <div class="dropzone" id="mediaZone">
           <input type="file" id="mediaInput" accept="image/*,video/*" multiple hidden />
-          <span>Add images / videos…</span>
-        </label>
+          <button type="button" id="mediaPick">Select images / videos</button>
+          <div class="dz-sub">or drop them here</div>
+        </div>
+        <div id="mediaState" class="hint"></div>
         <div class="row">
           <button id="btnShuffle" class="ghost">Shuffle</button>
           <button id="btnClear" class="ghost">Clear all</button>
         </div>
         <ul id="clipList" class="cliplist"></ul>
-        <p class="hint">Drag tiles to reorder. Drop files anywhere on the page.</p>
+        <p class="hint">Drag tiles to reorder.</p>
       </aside>
 
       <!-- ------------------------------------------------------ stage --- -->
@@ -146,17 +150,18 @@
 
     <div id="exportOverlay" class="overlay" hidden>
       <div class="overlay-card">
-        <h3>Rendering…</h3>
-        <p class="hint">
+        <h3 id="exportTitle">Rendering…</h3>
+        <p class="hint" id="exportHint">
           Recording happens in real time. Keep this tab visible and don't switch windows.
         </p>
-        <div class="bar"><div id="exportBar"></div></div>
-        <div id="exportPct" class="mono">0%</div>
+        <div id="exportProgress">
+          <div class="bar"><div id="exportBar"></div></div>
+          <div id="exportPct" class="mono">0%</div>
+        </div>
+        <p id="exportError" class="error" hidden></p>
         <button id="btnCancelExport" class="ghost">Cancel</button>
       </div>
     </div>
-
-    <div id="dropHint" class="drophint" hidden>Drop files to add</div>
 
     <script type="module" src="js/app.js"></script>
   </body>

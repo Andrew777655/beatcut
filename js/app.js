@@ -43,17 +43,38 @@ let musicSource = null;
 
 /* ================================================== media file loading == */
 
-function loadFiles(files) {
-  const jobs = [];
-  for (const file of files) {
-    if (file.type.startsWith('audio/')) jobs.push(loadAudio(file));
-    else if (file.type.startsWith('image/')) jobs.push(loadImage(file));
-    else if (file.type.startsWith('video/')) jobs.push(loadVideo(file));
-  }
-  return Promise.all(jobs).then(() => {
-    renderClipList();
-    rebuild();
+async function loadFiles(files) {
+  const list = [...files];
+  const media = list.filter((f) => /^(image|video)\//.test(f.type));
+  const audio = list.filter((f) => f.type.startsWith('audio/'));
+  const skipped = list
+    .filter((f) => !media.includes(f) && !audio.includes(f))
+    .map((f) => f.name);
+
+  // Load in parallel but splice in by selection order - the loaders finish at
+  // wildly different speeds, and clip order is the edit.
+  const loaded = await Promise.all(
+    media.map((f) => (f.type.startsWith('image/') ? loadImage(f) : loadVideo(f)))
+  );
+  loaded.forEach((clip, i) => {
+    if (clip) {
+      state.clips.push(clip);
+      state.order.push(clip.id);
+    } else {
+      skipped.push(media[i].name);
+    }
   });
+
+  if (media.length) {
+    $('mediaState').textContent = skipped.length
+      ? `Skipped ${skipped.length}: ${skipped.join(', ')} — this browser can't decode it.`
+      : '';
+  }
+
+  if (audio.length) await loadAudio(audio[0]);
+
+  renderClipList();
+  rebuild();
 }
 
 async function loadImage(file) {
@@ -61,19 +82,21 @@ async function loadImage(file) {
   const el = new Image();
   el.src = url;
   await el.decode().catch(() => {});
-  const clip = {
+  if (!el.naturalWidth) {
+    URL.revokeObjectURL(url);
+    return null;
+  }
+  return {
     id: nextId++,
     kind: 'image',
     el,
     url,
-    w: el.naturalWidth || 1,
-    h: el.naturalHeight || 1,
+    w: el.naturalWidth,
+    h: el.naturalHeight,
     duration: Infinity,
     thumb: url,
     name: file.name,
   };
-  state.clips.push(clip);
-  state.order.push(clip.id);
 }
 
 async function loadVideo(file) {
@@ -88,7 +111,15 @@ async function loadVideo(file) {
   await new Promise((res) => {
     el.addEventListener('loadedmetadata', res, { once: true });
     el.addEventListener('error', res, { once: true });
+    setTimeout(res, 10_000);
   });
+
+  // Phone footage is often HEVC in a .mov, which most browsers won't decode.
+  // Better to say so than to silently composite a black rectangle.
+  if (!el.videoWidth || !isFinite(el.duration) || el.duration <= 0) {
+    URL.revokeObjectURL(url);
+    return null;
+  }
 
   // Grab a poster frame for the tile.
   const thumb = await new Promise((res) => {
@@ -112,9 +143,9 @@ async function loadVideo(file) {
     kind: 'video',
     el,
     url,
-    w: el.videoWidth || 1,
-    h: el.videoHeight || 1,
-    duration: el.duration || 0,
+    w: el.videoWidth,
+    h: el.videoHeight,
+    duration: el.duration,
     thumb,
     name: file.name,
     audioNode: null,
@@ -128,8 +159,7 @@ async function loadVideo(file) {
     el.volume = 1;
   } catch { /* some codecs refuse; stays silent */ }
 
-  state.clips.push(clip);
-  state.order.push(clip.id);
+  return clip;
 }
 
 async function loadAudio(file) {
@@ -192,6 +222,7 @@ function rebuild() {
 
   if (!order.length || !state.audio) {
     state.duration = songEnd;
+    buildWaveLayer();
     drawWave();
     updateUi();
     return;
@@ -211,6 +242,7 @@ function rebuild() {
     ? state.segments[state.segments.length - 1].end
     : songEnd;
 
+  buildWaveLayer();
   drawWave();
   updateUi();
   if (!state.playing) drawFrame(state.cursor);
@@ -329,41 +361,58 @@ function computePeaks(buffer, buckets) {
   return peaks;
 }
 
-function drawWave() {
+// Peaks and cut markers only change when the audio or the timeline changes, so
+// they are cached. Redrawing 2000 bars every animation frame starves the
+// real-time recorder and shows up as dropped frames in the export.
+let waveLayer = null;
+
+function buildWaveLayer() {
   const dpr = window.devicePixelRatio || 1;
   const cssW = wave.clientWidth || 800;
+  const H = 140;
+
   wave.width = cssW * dpr;
-  wave.height = 140 * dpr;
+  wave.height = H * dpr;
   wctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  const W = cssW;
-  const H = 140;
-  wctx.clearRect(0, 0, W, H);
-  if (!state.audio) return;
+  if (!state.audio) { waveLayer = null; return; }
+
+  waveLayer = document.createElement('canvas');
+  waveLayer.width = cssW * dpr;
+  waveLayer.height = H * dpr;
+  const lc = waveLayer.getContext('2d');
+  lc.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   const peaks = state.audio.peaks;
   const dur = state.audio.buffer.duration;
 
-  wctx.fillStyle = '#39414f';
-  for (let x = 0; x < W; x++) {
-    const p = peaks[Math.floor((x / W) * peaks.length)] || 0;
+  lc.fillStyle = '#39414f';
+  for (let x = 0; x < cssW; x++) {
+    const p = peaks[Math.floor((x / cssW) * peaks.length)] || 0;
     const h = Math.max(1, p * H * 0.85);
-    wctx.fillRect(x, (H - h) / 2, 1, h);
+    lc.fillRect(x, (H - h) / 2, 1, h);
   }
 
-  // Cut markers.
-  wctx.strokeStyle = 'rgba(255,45,120,0.85)';
-  wctx.lineWidth = 1;
-  wctx.beginPath();
+  lc.strokeStyle = 'rgba(255,45,120,0.85)';
+  lc.lineWidth = 1;
+  lc.beginPath();
   for (const seg of state.segments) {
-    const x = (seg.start / dur) * W;
-    wctx.moveTo(x + 0.5, 0);
-    wctx.lineTo(x + 0.5, H);
+    const x = Math.round((seg.start / dur) * cssW) + 0.5;
+    lc.moveTo(x, 0);
+    lc.lineTo(x, H);
   }
-  wctx.stroke();
+  lc.stroke();
+}
 
-  // Playhead.
-  const px = (state.cursor / dur) * W;
+function drawWave() {
+  const cssW = wave.clientWidth || 800;
+  const H = 140;
+  wctx.clearRect(0, 0, cssW, H);
+  if (!waveLayer || !state.audio) return;
+
+  wctx.drawImage(waveLayer, 0, 0, cssW, H);
+
+  const px = (state.cursor / state.audio.buffer.duration) * cssW;
   wctx.strokeStyle = '#37e2d5';
   wctx.lineWidth = 2;
   wctx.beginPath();
@@ -455,45 +504,103 @@ let recorder = null;
 let chunks = [];
 let exportMime = '';
 
+let exportWatchdog = null;
+
 async function startExport() {
   if (!state.segments.length) return;
-  exportMime = MIME_CANDIDATES.find((m) => MediaRecorder.isTypeSupported(m)) || '';
-  if (!exportMime) {
-    alert('This browser cannot record video. Use Chrome or Edge.');
-    return;
+
+  showExportOverlay();
+  try {
+    exportMime = MIME_CANDIDATES.find((m) => MediaRecorder.isTypeSupported(m)) || '';
+    if (!exportMime) {
+      throw new Error(
+        'This browser cannot record video. Chrome or Edge will export MP4 directly.'
+      );
+    }
+
+    pause();
+    await ensureAudio();
+    if (audioCtx.state !== 'running') {
+      throw new Error('The audio engine is suspended. Click anywhere on the page, then retry.');
+    }
+
+    state.cursor = 0;
+    lastSegment = null;
+    drawFrame(0);
+
+    const fps = 30;
+    const videoStream = stage.captureStream(fps);
+    const audioTracks = streamDest.stream.getAudioTracks();
+    if (!videoStream.getVideoTracks().length) {
+      throw new Error('Could not capture the preview canvas.');
+    }
+    const mixed = new MediaStream([...videoStream.getVideoTracks(), ...audioTracks]);
+
+    chunks = [];
+    recorder = new MediaRecorder(mixed, {
+      mimeType: exportMime,
+      videoBitsPerSecond: 12_000_000,
+      audioBitsPerSecond: 192_000,
+    });
+    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    recorder.onstop = saveRecording;
+    recorder.onerror = (e) => exportFailed(e.error || new Error('Recording failed.'));
+
+    state.exporting = true;
+    setExportProgress(0);
+    recorder.start(500);
+    await play(0);
+
+    if (!state.playing) throw new Error('Playback did not start.');
+
+    // If the clock hasn't moved after a few seconds something is wedged;
+    // say so instead of leaving a modal stuck at 0% forever.
+    clearTimeout(exportWatchdog);
+    exportWatchdog = setTimeout(() => {
+      if (state.exporting && state.cursor < 0.2) {
+        exportFailed(new Error('Rendering stalled at the start. Reload the page and retry.'));
+      }
+    }, 4000);
+  } catch (err) {
+    exportFailed(err);
   }
+}
 
-  pause();
-  await ensureAudio();
-  state.cursor = 0;
-  drawFrame(0);
-
-  const fps = 30;
-  const videoStream = stage.captureStream(fps);
-  const mixed = new MediaStream([
-    ...videoStream.getVideoTracks(),
-    ...streamDest.stream.getAudioTracks(),
-  ]);
-
-  chunks = [];
-  recorder = new MediaRecorder(mixed, {
-    mimeType: exportMime,
-    videoBitsPerSecond: 12_000_000,
-    audioBitsPerSecond: 192_000,
-  });
-  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-  recorder.onstop = saveRecording;
-
-  state.exporting = true;
+function showExportOverlay() {
   $('exportOverlay').hidden = false;
+  $('exportTitle').textContent = 'Rendering…';
+  $('exportHint').hidden = false;
+  $('exportProgress').hidden = false;
+  $('exportError').hidden = true;
+  $('exportError').textContent = '';
+  $('btnCancelExport').textContent = 'Cancel';
   setExportProgress(0);
-  recorder.start(500);
-  play(0);
+}
+
+function exportFailed(err) {
+  clearTimeout(exportWatchdog);
+  state.exporting = false;
+  if (recorder && recorder.state !== 'inactive') {
+    recorder.onstop = null;
+    try { recorder.stop(); } catch { /* already gone */ }
+  }
+  recorder = null;
+  chunks = [];
+  pause();
+
+  $('exportTitle').textContent = 'Export failed';
+  $('exportHint').hidden = true;
+  $('exportProgress').hidden = true;
+  $('exportError').hidden = false;
+  $('exportError').textContent = String((err && err.message) || err);
+  $('btnCancelExport').textContent = 'Close';
+  console.error('[beatcut] export failed:', err);
 }
 
 function finishExport() {
   if (!state.exporting) return;
   state.exporting = false;
+  clearTimeout(exportWatchdog);
   setTimeout(() => {
     if (recorder && recorder.state !== 'inactive') recorder.stop();
   }, 350); // let the tail of the audio flush into the muxer
@@ -501,6 +608,7 @@ function finishExport() {
 
 function cancelExport() {
   state.exporting = false;
+  clearTimeout(exportWatchdog);
   chunks = [];
   if (recorder && recorder.state !== 'inactive') {
     recorder.onstop = null;
@@ -512,6 +620,11 @@ function cancelExport() {
 }
 
 function saveRecording() {
+  clearTimeout(exportWatchdog);
+  if (!chunks.length) {
+    exportFailed(new Error('The recorder produced no data. Try a shorter edit or reload.'));
+    return;
+  }
   const blob = new Blob(chunks, { type: exportMime });
   const ext = exportMime.includes('mp4') ? 'mp4' : 'webm';
   const a = document.createElement('a');
@@ -631,9 +744,6 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
 /* ============================================================== events == */
 
-$('audioInput').addEventListener('change', (e) => loadFiles(e.target.files));
-$('mediaInput').addEventListener('change', (e) => loadFiles(e.target.files));
-
 $('btnPlay').addEventListener('click', () => (state.playing ? pause() : play()));
 $('btnStop').addEventListener('click', () => {
   pause();
@@ -718,25 +828,50 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Drag and drop anywhere.
-let dragDepth = 0;
-window.addEventListener('dragenter', (e) => {
-  if (!e.dataTransfer.types.includes('Files')) return;
-  dragDepth++;
-  $('dropHint').hidden = false;
-});
-window.addEventListener('dragleave', () => {
-  if (--dragDepth <= 0) { dragDepth = 0; $('dropHint').hidden = true; }
-});
-window.addEventListener('dragover', (e) => e.preventDefault());
-window.addEventListener('drop', (e) => {
-  e.preventDefault();
-  dragDepth = 0;
-  $('dropHint').hidden = true;
-  if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files);
-});
+// Drop zones, scoped to the two panels. `dragleave` fires when the pointer
+// crosses into a child element too, so compare against the zone's own box
+// instead of counting enter/leave pairs - counters drift out of sync and
+// leave the highlight stuck on.
+function makeDropZone(zone, picker, input) {
+  picker.addEventListener('click', () => input.click());
+  input.addEventListener('change', (e) => {
+    loadFiles(e.target.files);
+    input.value = ''; // let the same file be picked again later
+  });
 
-window.addEventListener('resize', drawWave);
+  const isFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+
+  zone.addEventListener('dragover', (e) => {
+    if (!isFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    zone.classList.add('over');
+  });
+  zone.addEventListener('dragleave', (e) => {
+    const r = zone.getBoundingClientRect();
+    const inside =
+      e.clientX >= r.left && e.clientX <= r.right &&
+      e.clientY >= r.top && e.clientY <= r.bottom;
+    if (!inside) zone.classList.remove('over');
+  });
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.classList.remove('over');
+    if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files);
+  });
+}
+
+makeDropZone($('audioZone'), $('audioPick'), $('audioInput'));
+makeDropZone($('mediaZone'), $('mediaPick'), $('mediaInput'));
+
+// Dropping a file outside a zone would otherwise navigate away from the app.
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => e.preventDefault());
+
+window.addEventListener('resize', () => {
+  buildWaveLayer();
+  drawWave();
+});
 
 // Handy from the devtools console when something looks off.
 window.beatcut = { state, audioCtx, play, pause, rebuild, startExport };
