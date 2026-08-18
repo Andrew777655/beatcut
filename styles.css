@@ -11,6 +11,11 @@
 
 * { box-sizing: border-box; }
 
+/* Any author `display` rule outranks the UA stylesheet's [hidden]{display:none},
+   so .overlay{display:flex} and .field{display:block} kept those elements on
+   screen even with the attribute set. Make `hidden` actually mean hidden. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
