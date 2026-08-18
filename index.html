@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BeatCut — beat-synced edits</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">BeatCut</div>
+      <div class="readout" id="readout">Load a song to start</div>
+      <div class="topbar-actions">
+        <button id="btnExport" class="primary" disabled>Export video</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- ------------------------------------------------ media panel --- -->
+      <aside class="panel">
+        <h2>1 · Music</h2>
+        <label class="filebtn">
+          <input type="file" id="audioInput" accept="audio/*" hidden />
+          <span id="audioLabel">Choose an audio file…</span>
+        </label>
+        <div id="analyzeState" class="hint"></div>
+
+        <h2>2 · Clips &amp; photos</h2>
+        <label class="filebtn">
+          <input type="file" id="mediaInput" accept="image/*,video/*" multiple hidden />
+          <span>Add images / videos…</span>
+        </label>
+        <div class="row">
+          <button id="btnShuffle" class="ghost">Shuffle</button>
+          <button id="btnClear" class="ghost">Clear all</button>
+        </div>
+        <ul id="clipList" class="cliplist"></ul>
+        <p class="hint">Drag tiles to reorder. Drop files anywhere on the page.</p>
+      </aside>
+
+      <!-- ------------------------------------------------------ stage --- -->
+      <section class="stage">
+        <div class="canvas-wrap">
+          <canvas id="stage" width="1080" height="1920"></canvas>
+          <div id="stageEmpty" class="stage-empty">Add music and clips to see the preview</div>
+        </div>
+
+        <div class="transport">
+          <button id="btnPlay" disabled>▶</button>
+          <button id="btnStop" disabled>■</button>
+          <span id="time" class="time">0:00 / 0:00</span>
+          <label class="vol">
+            Vol <input type="range" id="volume" min="0" max="1" step="0.01" value="0.9" />
+          </label>
+        </div>
+
+        <canvas id="wave" class="wave" height="140"></canvas>
+        <p class="hint center">Click the waveform to scrub. Vertical lines are cut points.</p>
+      </section>
+
+      <!-- --------------------------------------------------- settings --- -->
+      <aside class="panel">
+        <h2>3 · Cutting</h2>
+
+        <label class="field">
+          Cut every
+          <select id="beatsPerCut">
+            <option value="0.5">½ beat (double time)</option>
+            <option value="1" selected>1 beat</option>
+            <option value="2">2 beats</option>
+            <option value="4">4 beats (1 bar)</option>
+            <option value="8">8 beats (2 bars)</option>
+          </select>
+        </label>
+
+        <label class="field">
+          Beat source
+          <select id="mode">
+            <option value="grid" selected>Tempo grid (electronic / pop)</option>
+            <option value="onsets">Onset detection (live / irregular)</option>
+          </select>
+        </label>
+
+        <div class="field" id="bpmField">
+          BPM
+          <div class="bpmrow">
+            <button id="bpmHalf" class="ghost" title="Halve (half-time cuts)">÷2</button>
+            <input type="number" id="bpm" min="40" max="300" step="0.01" value="120" />
+            <button id="bpmDouble" class="ghost" title="Double (double-time cuts)">×2</button>
+          </div>
+          <button id="bpmReset" class="ghost wide">Reset to detected</button>
+        </div>
+
+        <label class="field" id="senseField" hidden>
+          Sensitivity <span class="val" id="senseVal">1.4</span>
+          <input type="range" id="sense" min="0.4" max="3" step="0.05" value="1.4" />
+        </label>
+
+        <label class="field">
+          Nudge beats <span class="val" id="offsetVal">0 ms</span>
+          <input type="range" id="offset" min="-500" max="500" step="5" value="0" />
+        </label>
+
+        <label class="field">
+          Stop after
+          <select id="maxClips">
+            <option value="0" selected>End of song</option>
+            <option value="8">8 clips</option>
+            <option value="16">16 clips</option>
+            <option value="24">24 clips</option>
+            <option value="32">32 clips</option>
+          </select>
+        </label>
+
+        <h2>4 · Look</h2>
+        <label class="field">
+          Format
+          <select id="aspect">
+            <option value="1080x1920" selected>9:16 vertical (1080×1920)</option>
+            <option value="1080x1080">1:1 square (1080×1080)</option>
+            <option value="1920x1080">16:9 wide (1920×1080)</option>
+          </select>
+        </label>
+
+        <div class="checks">
+          <label><input type="checkbox" id="fxPunch" checked /> Punch zoom on cut</label>
+          <label><input type="checkbox" id="fxFlash" /> Flash on cut</label>
+          <label><input type="checkbox" id="fxShake" /> Shake on cut</label>
+          <label><input type="checkbox" id="fxDrift" checked /> Slow drift (Ken Burns)</label>
+        </div>
+
+        <label class="field">
+          Intensity <span class="val" id="intensityVal">100%</span>
+          <input type="range" id="intensity" min="0" max="200" step="5" value="100" />
+        </label>
+
+        <label class="field">
+          Clip audio
+          <select id="clipAudio">
+            <option value="0" selected>Muted (music only)</option>
+            <option value="0.35">Quiet under music</option>
+          </select>
+        </label>
+      </aside>
+    </main>
+
+    <div id="exportOverlay" class="overlay" hidden>
+      <div class="overlay-card">
+        <h3>Rendering…</h3>
+        <p class="hint">
+          Recording happens in real time. Keep this tab visible and don't switch windows.
+        </p>
+        <div class="bar"><div id="exportBar"></div></div>
+        <div id="exportPct" class="mono">0%</div>
+        <button id="btnCancelExport" class="ghost">Cancel</button>
+      </div>
+    </div>
+
+    <div id="dropHint" class="drophint" hidden>Drop files to add</div>
+
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>
