@@ -77,6 +77,10 @@ const DEFAULT_OV = {
   transition: '',  // '' = follow the global Look setting
 };
 
+// Every un-edited slot points at this one object, so a stray write here would
+// silently change every clip at once. Freeze it: such a bug should throw.
+Object.freeze(DEFAULT_OV);
+
 const ovFor = (i) => state.overrides[i] || (state.overrides[i] = { ...DEFAULT_OV });
 const isEdited = (ov) =>
   !!ov && Object.keys(DEFAULT_OV).some((k) => ov[k] !== DEFAULT_OV[k]);
@@ -1108,6 +1112,14 @@ function syncInspector() {
     $('inspTrim').value = Math.min(ov.inPoint, clip.duration);
   }
 
+  // Spell out what "Use global" currently resolves to, so it is obvious whether
+  // this slot is following the Look panel or overriding it.
+  const labelOf = (list, id) => (list.find(([v]) => v === id) || [, id])[1];
+  $('inspEffect').options[0].textContent =
+    `Use global (${labelOf(EFFECTS, $('effect').value)})`;
+  $('inspTransition').options[0].textContent =
+    `Use global (${labelOf(TRANSITIONS, $('transition').value)})`;
+
   $('inspEffect').value = ov.effect;
   $('inspTransition').value = ov.transition;
   $('inspVol').value = Math.round(ov.volume * 100);
@@ -1319,6 +1331,7 @@ for (const id of ['beatsPerCut', 'mode', 'bpm', 'sense', 'offset', 'maxClips']) 
 for (const id of ['effect', 'transition', 'transLen', 'intensity']) {
   $(id).addEventListener('input', () => {
     syncLabels();
+    if (state.selected != null) syncInspector(); // refresh the "Use global (…)" text
     if (!state.playing) drawFrame(state.cursor);
   });
 }

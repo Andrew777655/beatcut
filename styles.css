@@ -191,6 +191,14 @@ button.ghost { background: transparent; }
 
 .val { color: var(--accent-2); font-variant-numeric: tabular-nums; }
 
+/* Says whether a control hits every clip or just the selected one. */
+.scope {
+  color: var(--accent);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
 .bpmrow { display: flex; gap: 6px; margin-top: 5px; }
 .bpmrow button { padding: 6px 9px; }
 .bpmrow input[type="number"] {

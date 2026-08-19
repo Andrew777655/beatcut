@@ -83,12 +83,12 @@
           </label>
 
           <label class="field">
-            Effect
+            Effect · <span class="scope">this clip only</span>
             <select id="inspEffect"></select>
           </label>
 
           <label class="field">
-            Transition in
+            Transition in · <span class="scope">this cut only</span>
             <select id="inspTransition"></select>
           </label>
 
@@ -199,14 +199,19 @@
         </label>
 
         <label class="field">
-          Effect on each clip
+          Default effect · <span class="scope">all clips</span>
           <select id="effect"></select>
         </label>
 
         <label class="field">
-          Transition between clips
+          Default transition · <span class="scope">all cuts</span>
           <select id="transition"></select>
         </label>
+
+        <p class="hint">
+          These set every clip at once. To change one clip on its own, click its
+          block in the timeline and use the inspector at the top of this panel.
+        </p>
 
         <label class="field">
           Transition length <span class="val" id="transLenVal">180 ms</span>
