@@ -314,6 +314,68 @@ button.wide { width: 100%; margin-top: 6px; font-size: 12px; }
 }
 .sep { border: 0; border-top: 1px solid var(--line); margin: 16px 0 0; }
 
+/* --------------------------------------------------------- captions --- */
+
+#capText {
+  width: 100%;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+  resize: vertical;
+}
+
+.auto {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 12px 0;
+}
+.auto summary { cursor: pointer; color: var(--dim); font-size: 13px; }
+.auto[open] summary { color: var(--text); margin-bottom: 6px; }
+
+.caplist { list-style: none; margin: 10px 0 0; padding: 0; }
+.caplist li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+.caplist .at {
+  color: var(--accent-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.caplist input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-size: 12px;
+  padding: 2px 0;
+}
+.caplist input[type="text"]:focus {
+  outline: 0;
+  border-bottom: 1px solid var(--accent);
+}
+.caplist li.active { background: rgba(55, 226, 213, 0.08); }
+
+input[type="color"] {
+  width: 100%;
+  height: 28px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px;
+  cursor: pointer;
+}
+
 /* ---------------------------------------------------------- cliplist --- */
 
 .cliplist {

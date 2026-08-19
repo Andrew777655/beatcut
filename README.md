@@ -49,7 +49,45 @@ Vercel project settings should read: Framework Preset **Other**, Build Command
    inspector and edit that slot on its own. Drag a tile from the clips panel onto
    a block to swap what plays there. A dot in the corner marks an edited slot,
    and the block under the playhead is outlined while it plays.
-5. **Export video** — renders and downloads an MP4 to your Downloads folder.
+5. **Captions** — type or paste one line per caption, pick how many beats each
+   line holds, and hit **Place on beats**. Lines land exactly on the grid, so
+   they snap in with the cuts instead of drifting.
+6. **Export video** — renders and downloads an MP4 to your Downloads folder.
+
+## Captions
+
+Captions are drawn onto the same canvas as the clips, so what you see in the
+preview is exactly what ends up in the file — no separate subtitle track to go
+out of sync.
+
+**Place on beats** spreads the lines in the box across the beat grid,
+`Beats per line` each (4 beats = one bar is the usual choice). If the playhead
+is parked somewhere, placement starts from the nearest beat to it, so you can
+drop a chorus in partway through. Each line then shows up in the list below with
+its timecode — click the time to jump there, edit the text inline, ✕ to remove.
+
+**Caption style** covers size, lower/centre/upper third, outline weight, text and
+outline colour, uppercase, a dark backing box, and a pop-in on the beat. The
+default is the usual look: heavy white text, thick black outline, lower third.
+
+### Auto-transcribe
+
+Optional, folded away under the captions box. It runs OpenAI's Whisper **in this
+tab** via `transformers.js` — your audio is never uploaded — but the model itself
+downloads once from a CDN (~40 MB for tiny, ~80 MB for base) and is cached by the
+browser afterwards. So this one feature needs a connection the first time.
+
+**Set your expectations low.** Whisper is trained on speech. Sung vocals sitting
+in a full mix are a different problem, and results range from decent on a sparse
+track with clear vocals to unusable on a dense one. It is there to save you typing
+a first draft, not to produce a finished caption track. *Snap lines to the beat
+grid* pulls whatever it returns onto the nearest beat, which fixes the timing even
+when the words need work — and the timing is the part that normally takes longest.
+
+Instrumental tracks correctly come back with nothing.
+
+Captions only ever show text you supply or that was transcribed from your own
+audio file — there's no lyrics database wired in.
 
 ## Editing one slot
 
@@ -168,6 +206,7 @@ cuts within about 10 ms of the true beat.
 | `index.html` | The app |
 | `styles.css` | Styling |
 | `js/analysis.js` | FFT, onset detection, tempo and beat tracking |
+| `js/captions.js` | Caption rendering, beat snapping, Whisper transcription |
 | `js/app.js` | Timeline, preview renderer, effects, export |
 
 `window.beatcut` is exposed in the devtools console (`state`, `audioCtx`, `play`,

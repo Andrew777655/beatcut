@@ -1,4 +1,5 @@
 import { analyze, buildGrid, pickOnsets } from './analysis.js';
+import { drawCaptions, captionAt, distribute, snapToBeat, transcribe } from './captions.js';
 
 /* ================================================================ state == */
 
@@ -8,6 +9,7 @@ const state = {
   audio: null,          // {buffer, name, peaks}
   analysis: null,       // result of analyze()
   segments: [],         // {start, end, clipId, ov}
+  captions: [],         // {id, text, start, end} in timeline seconds
   overrides: {},        // slot index -> per-slot edits, see DEFAULT_OV
   selected: null,       // index of the slot open in the inspector
   duration: 0,          // timeline length in seconds
@@ -528,6 +530,12 @@ function drawFrame(t) {
     sctx.fillRect(0, 0, W, H);
   }
 
+  // Captions go through the same canvas as everything else, so the preview and
+  // the exported file cannot drift apart.
+  if ($('capOn').checked && state.captions.length) {
+    drawCaptions(sctx, state.captions, t, W, H, captionStyle());
+  }
+
   // Keep short videos looping inside a long segment, back to their in-point.
   const ov = seg.ov || DEFAULT_OV;
   if (clip.kind === 'video' && state.playing && clip.el.duration) {
@@ -826,6 +834,7 @@ function tick() {
     drawFrame(t);
     drawWave();
     markPlayingSlot();
+    markActiveCaption();
     $('time').textContent = `${fmt(t)} / ${fmt(state.duration)}`;
     if (state.exporting) setExportProgress(t / state.duration);
   }
@@ -1184,6 +1193,129 @@ const fmtMs = (s) => {
   return `${m}:${String((s % 60).toFixed(1)).padStart(4, '0')}`;
 };
 
+/* =========================================================== captions == */
+
+function captionStyle() {
+  return {
+    size: Number($('capSize').value),
+    position: $('capPos').value,
+    outline: Number($('capOutline').value),
+    color: $('capColor').value,
+    outlineColor: $('capOutlineColor').value,
+    uppercase: $('capUpper').checked,
+    pop: $('capPop').checked,
+    box: $('capBox').checked,
+  };
+}
+
+/** Spread the typed lines across the beat grid. */
+function placeCaptions() {
+  const beats = beatTimes();
+  if (!beats.length) return;
+  const lines = $('capText').value.split('\n');
+  const startAt = state.cursor > 0.05 ? snapToBeat(beats, state.cursor, 10) : beats[0];
+  state.captions = distribute(
+    lines,
+    beats,
+    startAt,
+    Number($('capBeats').value),
+    state.duration || (state.audio ? state.audio.buffer.duration : 0)
+  );
+  renderCaptionList();
+  if (!state.playing) drawFrame(state.cursor);
+}
+
+function renderCaptionList() {
+  const list = $('capList');
+  list.innerHTML = '';
+  state.captions.forEach((cap, i) => {
+    const li = document.createElement('li');
+    li.dataset.id = cap.id;
+
+    const at = document.createElement('span');
+    at.className = 'at';
+    at.textContent = fmtMs(cap.start);
+    at.title = 'Jump here';
+    at.addEventListener('click', () => {
+      state.cursor = cap.start + 0.001;
+      lastSegment = null;
+      if (state.playing) play(state.cursor);
+      else { drawFrame(state.cursor); drawWave(); }
+    });
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = cap.text;
+    input.addEventListener('input', () => {
+      state.captions[i].text = input.value;
+      if (!state.playing) drawFrame(state.cursor);
+    });
+
+    const del = document.createElement('button');
+    del.className = 'linkish';
+    del.textContent = '✕';
+    del.title = 'Remove';
+    del.addEventListener('click', () => {
+      state.captions.splice(i, 1);
+      renderCaptionList();
+      if (!state.playing) drawFrame(state.cursor);
+    });
+
+    li.append(at, input, del);
+    list.appendChild(li);
+  });
+}
+
+/** Highlight whichever caption is on screen. */
+let activeCaptionId = null;
+function markActiveCaption() {
+  const cap = captionAt(state.captions, state.cursor);
+  const id = cap ? cap.id : null;
+  if (id === activeCaptionId) return;
+  activeCaptionId = id;
+  for (const li of $('capList').children) {
+    li.classList.toggle('active', li.dataset.id === id);
+  }
+}
+
+async function runTranscribe() {
+  if (!state.audio) return;
+  const btn = $('capTranscribe');
+  const status = $('capStatus');
+  btn.disabled = true;
+
+  try {
+    const result = await transcribe(
+      state.audio.buffer,
+      $('capModel').value,
+      (s) => { status.textContent = s.message; }
+    );
+
+    if (!result.length) {
+      status.textContent = 'No speech found. Instrumental tracks give nothing back.';
+      return;
+    }
+
+    const beats = beatTimes();
+    state.captions = result.map((c) => ({
+      ...c,
+      start: $('capSnap').checked ? snapToBeat(beats, c.start, 0.3) : c.start,
+      end: $('capSnap').checked ? snapToBeat(beats, c.end, 0.3) : c.end,
+    })).filter((c) => c.end > c.start);
+
+    $('capText').value = state.captions.map((c) => c.text).join('\n');
+    renderCaptionList();
+    status.textContent =
+      `${state.captions.length} lines — expect mistakes on sung vocals; edit them below.`;
+    if (!state.playing) drawFrame(state.cursor);
+  } catch (err) {
+    status.textContent = String((err && err.message) || err);
+    console.error('[beatcut] transcription failed:', err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* ================================================================== ui == */
 
 function renderClipList() {
@@ -1268,6 +1400,8 @@ function syncLabels() {
   $('offsetVal').textContent = `${$('offset').value} ms`;
   $('intensityVal').textContent = `${$('intensity').value}%`;
   $('transLenVal').textContent = `${$('transLen').value} ms`;
+  $('capSizeVal').textContent = `${Number($('capSize').value).toFixed(1)}%`;
+  $('capOutlineVal').textContent = `${$('capOutline').value}%`;
 }
 
 function setAspect() {
@@ -1398,6 +1532,24 @@ $('inspApplyAll').addEventListener('click', () => {
   }
   rebuild();
 });
+
+$('capPlace').addEventListener('click', placeCaptions);
+$('capClear').addEventListener('click', () => {
+  state.captions = [];
+  $('capText').value = '';
+  $('capStatus').textContent = '';
+  renderCaptionList();
+  if (!state.playing) drawFrame(state.cursor);
+});
+$('capTranscribe').addEventListener('click', runTranscribe);
+
+for (const id of ['capOn', 'capSize', 'capPos', 'capOutline', 'capColor',
+                  'capOutlineColor', 'capUpper', 'capPop', 'capBox']) {
+  $(id).addEventListener('input', () => {
+    syncLabels();
+    if (!state.playing) drawFrame(state.cursor);
+  });
+}
 
 $('aspect').addEventListener('change', setAspect);
 $('volume').addEventListener('input', (e) => (master.gain.value = Number(e.target.value)));

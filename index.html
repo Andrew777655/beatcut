@@ -232,6 +232,85 @@
             <option value="0.35">Quiet under music</option>
           </select>
         </label>
+
+        <h2>5 · Captions</h2>
+
+        <label class="checkline">
+          <input type="checkbox" id="capOn" checked /> Show captions
+        </label>
+
+        <textarea id="capText" rows="5"
+          placeholder="One line per caption.&#10;They get spread across the beat grid."></textarea>
+
+        <label class="field">
+          Beats per line
+          <select id="capBeats">
+            <option value="2">2 beats</option>
+            <option value="4" selected>4 beats (1 bar)</option>
+            <option value="8">8 beats (2 bars)</option>
+            <option value="16">16 beats</option>
+          </select>
+        </label>
+
+        <div class="row">
+          <button id="capPlace">Place on beats</button>
+          <button id="capClear" class="ghost">Clear</button>
+        </div>
+
+        <details class="auto">
+          <summary>Auto-transcribe from the song</summary>
+          <p class="hint">
+            Runs a speech model in this tab — your audio never leaves the machine,
+            but the model itself downloads once from a CDN. Whisper is trained on
+            speech, so sung vocals over a full mix come out rough. Treat it as a
+            draft to fix up, not a finished caption track.
+          </p>
+          <label class="field">
+            Model
+            <select id="capModel">
+              <option value="tiny.en">Tiny, English (~40 MB, fastest)</option>
+              <option value="base.en" selected>Base, English (~80 MB, better)</option>
+              <option value="base">Base, multilingual (~80 MB)</option>
+            </select>
+          </label>
+          <label class="checkline">
+            <input type="checkbox" id="capSnap" checked /> Snap lines to the beat grid
+          </label>
+          <button id="capTranscribe" class="ghost wide">Transcribe</button>
+          <div id="capStatus" class="hint"></div>
+        </details>
+
+        <ul id="capList" class="caplist"></ul>
+
+        <h2>6 · Caption style</h2>
+
+        <label class="field">
+          Size <span class="val" id="capSizeVal">6.5%</span>
+          <input type="range" id="capSize" min="2" max="14" step="0.1" value="6.5" />
+        </label>
+
+        <label class="field">
+          Position
+          <select id="capPos">
+            <option value="bottom" selected>Lower third</option>
+            <option value="middle">Centre</option>
+            <option value="top">Upper third</option>
+          </select>
+        </label>
+
+        <label class="field">
+          Outline <span class="val" id="capOutlineVal">14%</span>
+          <input type="range" id="capOutline" min="0" max="40" step="1" value="14" />
+        </label>
+
+        <div class="row">
+          <label class="field">Text <input type="color" id="capColor" value="#ffffff" /></label>
+          <label class="field">Outline <input type="color" id="capOutlineColor" value="#000000" /></label>
+        </div>
+
+        <label class="checkline"><input type="checkbox" id="capUpper" checked /> UPPERCASE</label>
+        <label class="checkline"><input type="checkbox" id="capPop" checked /> Pop in on the beat</label>
+        <label class="checkline"><input type="checkbox" id="capBox" /> Dark background box</label>
       </aside>
     </main>
 
