@@ -8,6 +8,9 @@ const state = {
   order: [],            // clip ids, the sequence used on the timeline
   audio: null,          // {buffer, name, peaks}
   analysis: null,       // result of analyze()
+  // Times are absolute positions in the song, so trimming is just a window.
+  tStart: 0,            // where the edit begins in the song
+  tEnd: 0,              // where it ends
   segments: [],         // {start, end, clipId, ov}
   captions: [],         // {id, text, start, end} in timeline seconds
   overrides: {},        // slot index -> per-slot edits, see DEFAULT_OV
@@ -112,10 +115,21 @@ let musicSource = null;
 
 /* ================================================== media file loading == */
 
-async function loadFiles(files) {
+/**
+ * @param {'audio'|'media'} target which panel the files arrived on. Dropping a
+ *   video on the music panel means "use its soundtrack", not "add a clip".
+ */
+async function loadFiles(files, target = 'media') {
   const list = [...files];
-  const media = list.filter((f) => /^(image|video)\//.test(f.type));
-  const audio = list.filter((f) => f.type.startsWith('audio/'));
+  const soundtrack =
+    target === 'audio'
+      ? list.filter((f) => /^(audio|video)\//.test(f.type))
+      : list.filter((f) => f.type.startsWith('audio/'));
+  const media =
+    target === 'audio'
+      ? []
+      : list.filter((f) => /^(image|video)\//.test(f.type));
+  const audio = soundtrack;
   const skipped = list
     .filter((f) => !media.includes(f) && !audio.includes(f))
     .map((f) => f.name);
@@ -246,9 +260,24 @@ async function loadVideo(file) {
 
 async function loadAudio(file) {
   $('audioLabel').textContent = file.name;
-  $('analyzeState').textContent = 'Decoding…';
+  const fromVideo = file.type.startsWith('video/');
+  $('analyzeState').textContent = fromVideo ? 'Extracting audio…' : 'Decoding…';
+
   const buf = await file.arrayBuffer();
-  const decoded = await audioCtx.decodeAudioData(buf);
+  let decoded;
+  try {
+    // decodeAudioData pulls the audio track straight out of an MP4/WebM/MOV,
+    // so a video file needs no special handling beyond a clearer error.
+    decoded = await audioCtx.decodeAudioData(buf);
+  } catch (err) {
+    $('analyzeState').textContent = fromVideo
+      ? `Could not extract audio from ${file.name}. Its audio codec may be one ` +
+        'this browser cannot decode, or the file may have no audio track.'
+      : `Could not decode ${file.name}.`;
+    $('audioLabel').textContent = state.audio ? state.audio.name : 'No song loaded';
+    console.error('[beatcut] audio decode failed:', err);
+    return;
+  }
 
   $('analyzeState').textContent = 'Finding beats…';
   await new Promise((r) => setTimeout(r, 20)); // let the label paint
@@ -259,6 +288,12 @@ async function loadAudio(file) {
 
   state.audio = { buffer: decoded, name: file.name, peaks: computePeaks(decoded, 2000) };
   state.analysis = result;
+
+  // A new song invalidates any old trim window.
+  state.tStart = 0;
+  state.cursor = 0;
+  $('trimStart').max = Math.max(0.1, decoded.duration - 0.5).toFixed(2);
+  $('trimStart').value = 0;
 
   $('bpm').value = result.bpm.toFixed(2);
   $('analyzeState').textContent =
@@ -286,6 +321,9 @@ function rebuild() {
   const per = Number($('beatsPerCut').value);
   const maxClips = Number($('maxClips').value);
   const songEnd = state.audio ? state.audio.buffer.duration : 0;
+  const from = clamp(state.tStart, 0, Math.max(0, songEnd - 0.2));
+  const maxLen = Number($('editLength').value); // 0 = to the end of the song
+  const until = clamp(maxLen > 0 ? from + maxLen : songEnd, from + 0.2, songEnd);
 
   // Cut points: every `per` beats. Half-beat mode interpolates midpoints.
   let cuts = [];
@@ -297,20 +335,21 @@ function rebuild() {
   } else {
     for (let i = 0; i < beats.length; i += per) cuts.push(beats[i]);
   }
-  cuts = cuts.filter((t) => t > 0.06 && t < songEnd - 0.06);
+  cuts = cuts.filter((t) => t > from + 0.06 && t < until - 0.06);
 
   const order = state.order.filter((id) => state.clips.some((c) => c.id === id));
   state.segments = [];
 
+  state.tStart = from;
   if (!order.length || !state.audio) {
-    state.duration = songEnd;
+    state.tEnd = until;
     buildWaveLayer();
     drawWave();
     updateUi();
     return;
   }
 
-  const bounds = [0, ...cuts, songEnd];
+  const bounds = [from, ...cuts, until];
   const count = maxClips > 0 ? Math.min(maxClips, bounds.length - 1) : bounds.length - 1;
   const alive = new Set(state.clips.map((c) => c.id));
 
@@ -328,9 +367,9 @@ function rebuild() {
   }
   if (state.selected != null && state.selected >= count) state.selected = null;
 
-  state.duration = state.segments.length
+  state.tEnd = state.segments.length
     ? state.segments[state.segments.length - 1].end
-    : songEnd;
+    : until;
 
   buildWaveLayer();
   drawWave();
@@ -350,7 +389,7 @@ function segmentAt(t) {
     else if (t >= segs[mid].end) lo = mid + 1;
     else return segs[mid];
   }
-  return segs.length && t >= state.duration ? segs[segs.length - 1] : segs[0] || null;
+  return segs.length && t >= state.tEnd ? segs[segs.length - 1] : segs[0] || null;
 }
 
 /* ================================================================ draw == */
@@ -751,6 +790,19 @@ function buildWaveLayer() {
     lc.lineTo(x, H);
   }
   lc.stroke();
+
+  // Grey out the parts of the song the edit doesn't use.
+  const x0 = (state.tStart / dur) * cssW;
+  const x1 = (state.tEnd / dur) * cssW;
+  lc.fillStyle = 'rgba(12,13,16,0.72)';
+  if (x0 > 0) lc.fillRect(0, 0, x0, H);
+  if (x1 < cssW) lc.fillRect(x1, 0, cssW - x1, H);
+  lc.strokeStyle = 'rgba(55,226,213,0.9)';
+  lc.lineWidth = 2;
+  lc.beginPath();
+  lc.moveTo(x0, 0); lc.lineTo(x0, H);
+  lc.moveTo(x1, 0); lc.lineTo(x1, H);
+  lc.stroke();
 }
 
 function drawWave() {
@@ -780,7 +832,7 @@ async function ensureAudio() {
 async function play(from = state.cursor) {
   if (!state.audio || !state.segments.length) return;
   stopAudio();
-  if (from >= state.duration - 0.05) from = 0;
+  if (from >= state.tEnd - 0.05 || from < state.tStart) from = state.tStart;
 
   // Resume BEFORE reading currentTime, or the clock we sync to is frozen.
   await ensureAudio();
@@ -822,11 +874,12 @@ function tick() {
   requestAnimationFrame(tick);
   if (state.playing) {
     const t = currentTime();
-    if (t >= state.duration) {
-      state.cursor = 0;
+    if (t >= state.tEnd) {
+      // pause() latches the cursor from the clock, so rewind after it, not before.
       pause();
+      state.cursor = state.tStart;
       if (state.exporting) finishExport();
-      drawFrame(0);
+      drawFrame(state.tStart);
       drawWave();
       return;
     }
@@ -835,8 +888,9 @@ function tick() {
     drawWave();
     markPlayingSlot();
     markActiveCaption();
-    $('time').textContent = `${fmt(t)} / ${fmt(state.duration)}`;
-    if (state.exporting) setExportProgress(t / state.duration);
+    // Shown relative to the edit, not to the song.
+    $('time').textContent = `${fmt(t - state.tStart)} / ${fmt(editLength())}`;
+    if (state.exporting) setExportProgress((t - state.tStart) / editLength());
   }
 }
 requestAnimationFrame(tick);
@@ -875,9 +929,9 @@ async function startExport() {
       throw new Error('The audio engine is suspended. Click anywhere on the page, then retry.');
     }
 
-    state.cursor = 0;
+    state.cursor = state.tStart;
     lastSegment = null;
-    drawFrame(0);
+    drawFrame(state.tStart);
 
     const fps = 30;
     const videoStream = stage.captureStream(fps);
@@ -900,7 +954,7 @@ async function startExport() {
     state.exporting = true;
     setExportProgress(0);
     recorder.start(500);
-    await play(0);
+    await play(state.tStart);
 
     if (!state.playing) throw new Error('Playback did not start.');
 
@@ -908,7 +962,9 @@ async function startExport() {
     // say so instead of leaving a modal stuck at 0% forever.
     clearTimeout(exportWatchdog);
     exportWatchdog = setTimeout(() => {
-      if (state.exporting && state.cursor < 0.2) {
+      // Relative to the trim window - an edit starting 20s into the song is
+      // perfectly healthy at cursor 24.
+      if (state.exporting && state.cursor - state.tStart < 0.2) {
         exportFailed(new Error('Rendering stalled at the start. Reload the page and retry.'));
       }
     }, 4000);
@@ -1219,7 +1275,7 @@ function placeCaptions() {
     beats,
     startAt,
     Number($('capBeats').value),
-    state.duration || (state.audio ? state.audio.buffer.duration : 0)
+    state.tEnd || (state.audio ? state.audio.buffer.duration : 0)
   );
   renderCaptionList();
   if (!state.playing) drawFrame(state.cursor);
@@ -1386,12 +1442,12 @@ function updateUi() {
   $('btnStop').disabled = !ready;
   $('btnExport').disabled = !ready;
   $('stageEmpty').hidden = ready;
-  $('time').textContent = `${fmt(state.cursor)} / ${fmt(state.duration)}`;
+  $('time').textContent = `${fmt(state.cursor - state.tStart)} / ${fmt(editLength())}`;
 
   const a = state.analysis;
   $('readout').textContent = a
     ? `${state.clips.length} clips · ${Number($('bpm').value).toFixed(2)} BPM · ` +
-      `${state.segments.length} cuts · ${fmt(state.duration)}`
+      `${state.segments.length} cuts · ${fmt(editLength())}`
     : 'Load a song to start';
 }
 
@@ -1400,6 +1456,7 @@ function syncLabels() {
   $('offsetVal').textContent = `${$('offset').value} ms`;
   $('intensityVal').textContent = `${$('intensity').value}%`;
   $('transLenVal').textContent = `${$('transLen').value} ms`;
+  $('trimStartVal').textContent = fmtMs(Number($('trimStart').value));
   $('capSizeVal').textContent = `${Number($('capSize').value).toFixed(1)}%`;
   $('capOutlineVal').textContent = `${$('capOutline').value}%`;
 }
@@ -1410,6 +1467,8 @@ function setAspect() {
   stage.height = h;
   drawFrame(state.cursor);
 }
+
+const editLength = () => Math.max(0, state.tEnd - state.tStart);
 
 const fmt = (s) => {
   s = Math.max(0, s || 0);
@@ -1450,7 +1509,33 @@ $('btnClear').addEventListener('click', () => {
 $('btnExport').addEventListener('click', startExport);
 $('btnCancelExport').addEventListener('click', cancelExport);
 
-for (const id of ['beatsPerCut', 'mode', 'bpm', 'sense', 'offset', 'maxClips']) {
+$('trimStart').addEventListener('input', () => {
+  state.tStart = Number($('trimStart').value);
+  syncLabels();
+  pause();
+  state.cursor = state.tStart;
+  lastSegment = null;
+  rebuild();
+});
+
+$('trimHere').addEventListener('click', () => {
+  state.tStart = state.cursor;
+  $('trimStart').value = state.tStart;
+  syncLabels();
+  rebuild();
+});
+
+$('trimReset').addEventListener('click', () => {
+  state.tStart = 0;
+  $('trimStart').value = 0;
+  $('editLength').value = '0';
+  state.cursor = 0;
+  lastSegment = null;
+  syncLabels();
+  rebuild();
+});
+
+for (const id of ['beatsPerCut', 'mode', 'bpm', 'sense', 'offset', 'maxClips', 'editLength']) {
   $(id).addEventListener('input', () => {
     if (id === 'mode') {
       const onsets = $('mode').value === 'onsets';
@@ -1559,7 +1644,7 @@ wave.addEventListener('click', (e) => {
   if (!state.audio) return;
   const rect = wave.getBoundingClientRect();
   const t = ((e.clientX - rect.left) / rect.width) * state.audio.buffer.duration;
-  state.cursor = clamp(t, 0, state.duration);
+  state.cursor = clamp(t, state.tStart, state.tEnd);
   lastSegment = null;
   if (state.playing) play(state.cursor);
   else {
@@ -1579,10 +1664,10 @@ window.addEventListener('keydown', (e) => {
 // crosses into a child element too, so compare against the zone's own box
 // instead of counting enter/leave pairs - counters drift out of sync and
 // leave the highlight stuck on.
-function makeDropZone(zone, picker, input) {
+function makeDropZone(zone, picker, input, target) {
   picker.addEventListener('click', () => input.click());
   input.addEventListener('change', (e) => {
-    loadFiles(e.target.files);
+    loadFiles(e.target.files, target);
     input.value = ''; // let the same file be picked again later
   });
 
@@ -1604,12 +1689,12 @@ function makeDropZone(zone, picker, input) {
   zone.addEventListener('drop', (e) => {
     e.preventDefault();
     zone.classList.remove('over');
-    if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files);
+    if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files, target);
   });
 }
 
-makeDropZone($('audioZone'), $('audioPick'), $('audioInput'));
-makeDropZone($('mediaZone'), $('mediaPick'), $('mediaInput'));
+makeDropZone($('audioZone'), $('audioPick'), $('audioInput'), 'audio');
+makeDropZone($('mediaZone'), $('mediaPick'), $('mediaInput'), 'media');
 
 // Dropping a file outside a zone would otherwise navigate away from the app.
 window.addEventListener('dragover', (e) => e.preventDefault());

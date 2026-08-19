@@ -37,6 +37,10 @@ Vercel project settings should read: Framework Preset **Other**, Build Command
 
 1. **Music** — pick an audio file (mp3, wav, m4a…). It decodes and finds the beat
    in well under a second; the detected BPM shows up under the picker.
+   **A video works here too** — drop one on the music panel and its soundtrack is
+   extracted and used as the song. It won't be added as a clip; the panel you drop
+   on decides what the file is for. Drop the same video on the clips panel to use
+   its picture instead, or on both to use it for both.
 2. **Clips** — add images and videos with the button, or drop them on that panel.
    They keep the order you selected them in. Drag the tiles to reorder, hit
    **Shuffle** to randomize, ✕ on a tile to remove one. Anything the browser
@@ -140,7 +144,18 @@ manual change.
 a hair late, drag it negative. Cutting slightly *before* the beat usually reads
 better than slightly after.
 
-**Stop after** — cap the edit at 8/16/24/32 clips instead of running the whole song.
+**Edit length** — how long the finished video is: 7, 10, 15, 20, 30, 45, 60 seconds,
+or the rest of the song. 15 s or under is the safe range for a hook-driven edit.
+
+**Start of the song part** — where in the track the edit begins. Drag the slider,
+or scrub the waveform to the moment you want and hit **Start here (playhead)**.
+Together with Edit length this picks any window of the song — the chorus rather
+than the intro, say. The waveform dims everything outside that window so you can
+see what's actually being used, and the exported file contains only that window.
+**Whole song** resets both.
+
+**Stop after** — cap the edit at 8/16/24/32 clips. Whichever runs out first,
+this or the edit length, ends the video.
 
 **Look** — 9:16 for TikTok/Reels/Shorts.
 
