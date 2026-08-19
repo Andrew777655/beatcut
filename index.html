@@ -60,10 +60,72 @@
 
         <canvas id="wave" class="wave" height="140"></canvas>
         <p class="hint center">Click the waveform to scrub. Vertical lines are cut points.</p>
+
+        <div class="tl-head">
+          <span>Timeline</span>
+          <span class="hint" id="tlHint">Click a slot to edit it · drag a tile from the left onto a slot to swap it</span>
+        </div>
+        <div class="timeline" id="timeline"></div>
       </section>
 
       <!-- --------------------------------------------------- settings --- -->
       <aside class="panel">
+        <section id="inspector" hidden>
+          <h2 class="insp-head">
+            <span id="inspTitle">Slot</span>
+            <button id="inspClose" class="linkish" title="Deselect">✕</button>
+          </h2>
+          <div class="hint" id="inspMeta"></div>
+
+          <label class="field">
+            Show clip
+            <select id="inspClip"></select>
+          </label>
+
+          <label class="field" id="inspVolField">
+            Clip volume <span class="val" id="inspVolVal">100%</span>
+            <input type="range" id="inspVol" min="0" max="200" step="5" value="100" />
+          </label>
+
+          <label class="field" id="inspTrimField">
+            Start inside clip <span class="val" id="inspTrimVal">0.0s</span>
+            <input type="range" id="inspTrim" min="0" max="100" step="0.1" value="0" />
+          </label>
+
+          <label class="field">
+            Zoom <span class="val" id="inspZoomVal">100%</span>
+            <input type="range" id="inspZoom" min="100" max="300" step="1" value="100" />
+          </label>
+
+          <label class="field">
+            Brightness <span class="val" id="inspBrightVal">100%</span>
+            <input type="range" id="inspBright" min="20" max="200" step="1" value="100" />
+          </label>
+
+          <label class="field">
+            Contrast <span class="val" id="inspContrastVal">100%</span>
+            <input type="range" id="inspContrast" min="20" max="200" step="1" value="100" />
+          </label>
+
+          <label class="field">
+            Saturation <span class="val" id="inspSatVal">100%</span>
+            <input type="range" id="inspSat" min="0" max="300" step="1" value="100" />
+          </label>
+
+          <label class="field">
+            Hue <span class="val" id="inspHueVal">0°</span>
+            <input type="range" id="inspHue" min="-180" max="180" step="1" value="0" />
+          </label>
+
+          <label class="checkline"><input type="checkbox" id="inspMirror" /> Mirror horizontally</label>
+
+          <div class="row">
+            <button id="inspApplyAll" class="ghost">Apply look to all</button>
+            <button id="inspReset" class="ghost">Reset slot</button>
+          </div>
+          <hr class="sep" />
+        </section>
+
         <h2>3 · Cutting</h2>
 
         <label class="field">

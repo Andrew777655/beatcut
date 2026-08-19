@@ -44,7 +44,38 @@ Vercel project settings should read: Framework Preset **Other**, Build Command
    under the picker rather than silently becoming a black frame.
 3. **Preview** — press ▶ (or spacebar). Click anywhere on the waveform to scrub.
    The pink vertical lines are the cut points.
-4. **Export video** — renders and downloads an MP4 to your Downloads folder.
+4. **Timeline** — the strip under the waveform is one block per cut, sized by how
+   long it's on screen, so you can see the pacing. Click a block to open the
+   inspector and edit that slot on its own. Drag a tile from the clips panel onto
+   a block to swap what plays there. A dot in the corner marks an edited slot,
+   and the block under the playhead is outlined while it plays.
+5. **Export video** — renders and downloads an MP4 to your Downloads folder.
+
+## Editing one slot
+
+Selecting a timeline block opens the inspector at the top of the right panel:
+
+**Show clip** — pin a specific clip to this slot, or leave it on *Auto* to follow
+the normal rotation. Dragging a tile onto the block does the same thing.
+
+**Clip volume** *(video only)* — rides a dedicated gain node for that clip, so it
+works both in the preview and in the export. Remember the global **Clip audio**
+setting has to be above zero for any of it to be audible.
+
+**Start inside clip** *(video only)* — the in-point. Use it to skip a boring first
+second, or to show a different moment of the same video in each slot it appears
+in. If the slot outlasts the clip, playback loops back to this point, not to zero.
+
+**Zoom, Brightness, Contrast, Saturation, Hue, Mirror** — per-slot look. These
+composite at render time, so they land in the export exactly as previewed.
+
+**Apply look to all** copies zoom, colour and mirror onto every slot, leaving each
+slot's own clip, trim and volume alone — handy for grading a whole edit at once.
+**Reset slot** clears just the selected one.
+
+Slot edits are keyed by position, so changing BPM or the cut rate afterwards
+reshuffles which clip lands where while the edits stay with the slot number.
+Do your global timing first, then polish individual slots.
 
 ## The controls that matter
 

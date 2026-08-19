@@ -7,7 +7,9 @@ const state = {
   order: [],            // clip ids, the sequence used on the timeline
   audio: null,          // {buffer, name, peaks}
   analysis: null,       // result of analyze()
-  segments: [],         // {start, end, clipId}
+  segments: [],         // {start, end, clipId, ov}
+  overrides: {},        // slot index -> per-slot edits, see DEFAULT_OV
+  selected: null,       // index of the slot open in the inspector
   duration: 0,          // timeline length in seconds
   playing: false,
   startedAt: 0,         // audioCtx time at t = 0
@@ -17,6 +19,23 @@ const state = {
 };
 
 let nextId = 1;
+
+// Per-slot edits. `clipId: null` means "whatever the rotation would pick".
+const DEFAULT_OV = {
+  clipId: null,
+  volume: 1,
+  inPoint: 0,
+  zoom: 1,
+  brightness: 100,
+  contrast: 100,
+  saturate: 100,
+  hue: 0,
+  mirror: false,
+};
+
+const ovFor = (i) => state.overrides[i] || (state.overrides[i] = { ...DEFAULT_OV });
+const isEdited = (ov) =>
+  !!ov && Object.keys(DEFAULT_OV).some((k) => ov[k] !== DEFAULT_OV[k]);
 
 /* ================================================================= dom == */
 
@@ -151,10 +170,15 @@ async function loadVideo(file) {
     audioNode: null,
   };
 
-  // Route the clip's own audio through the mix so it can be exported too.
+  // Route the clip's own audio through the mix so it can be exported too, via a
+  // dedicated gain node - per-slot volume rides this, not element.volume, which
+  // is unreliable once the element is feeding a MediaElementSource.
   try {
     clip.audioNode = audioCtx.createMediaElementSource(el);
-    clip.audioNode.connect(clipBus);
+    clip.gain = audioCtx.createGain();
+    clip.gain.gain.value = 1;
+    clip.audioNode.connect(clip.gain);
+    clip.gain.connect(clipBus);
     el.muted = false;
     el.volume = 1;
   } catch { /* some codecs refuse; stays silent */ }
@@ -230,13 +254,21 @@ function rebuild() {
 
   const bounds = [0, ...cuts, songEnd];
   const count = maxClips > 0 ? Math.min(maxClips, bounds.length - 1) : bounds.length - 1;
+  const alive = new Set(state.clips.map((c) => c.id));
+
   for (let i = 0; i < count; i++) {
+    const ov = state.overrides[i];
+    // A slot pinned to a clip that has since been deleted falls back to the
+    // rotation instead of rendering nothing.
+    if (ov && ov.clipId != null && !alive.has(ov.clipId)) ov.clipId = null;
     state.segments.push({
       start: bounds[i],
       end: bounds[i + 1],
-      clipId: order[i % order.length],
+      clipId: (ov && ov.clipId) || order[i % order.length],
+      ov: ov || DEFAULT_OV,
     });
   }
+  if (state.selected != null && state.selected >= count) state.selected = null;
 
   state.duration = state.segments.length
     ? state.segments[state.segments.length - 1].end
@@ -244,6 +276,8 @@ function rebuild() {
 
   buildWaveLayer();
   drawWave();
+  renderTimeline();
+  syncInspector();
   updateUi();
   if (!state.playing) drawFrame(state.cursor);
 }
@@ -292,8 +326,9 @@ function drawFrame(t) {
   const dt = Math.max(0, t - seg.start);
   const segLen = Math.max(0.001, seg.end - seg.start);
   const k = Number($('intensity').value) / 100;
+  const ov = seg.ov || DEFAULT_OV;
 
-  let scale = 1;
+  let scale = ov.zoom;
   let dx = 0;
   let dy = 0;
 
@@ -305,13 +340,23 @@ function drawFrame(t) {
     dy += Math.cos(dt * 71) * amp;
   }
 
-  const src = clip.kind === 'video' ? clip.el : clip.el;
+  const src = clip.el;
   const sw = clip.kind === 'video' ? clip.el.videoWidth || clip.w : clip.w;
   const sh = clip.kind === 'video' ? clip.el.videoHeight || clip.h : clip.h;
 
   try {
+    sctx.save();
+    sctx.filter = cssFilter(ov);
+    if (ov.mirror) {
+      sctx.translate(W, 0);
+      sctx.scale(-1, 1);
+      dx = -dx;
+    }
     drawCover(sctx, src, sw, sh, W, H, scale, dx, dy);
-  } catch { /* frame not decodable yet */ }
+    sctx.restore();
+  } catch {
+    sctx.restore();
+  }
 
   if ($('fxFlash').checked) {
     const a = 0.5 * k * Math.exp(-dt / 0.07);
@@ -321,26 +366,38 @@ function drawFrame(t) {
     }
   }
 
-  // Keep short videos looping inside a long segment.
+  // Keep short videos looping inside a long segment, back to their in-point.
   if (clip.kind === 'video' && state.playing && clip.el.duration) {
     if (clip.el.currentTime >= clip.el.duration - 0.06) {
-      clip.el.currentTime = 0;
+      clip.el.currentTime = Math.min(ov.inPoint, Math.max(0, clip.el.duration - 0.05));
       clip.el.play().catch(() => {});
     }
   }
+}
+
+function cssFilter(ov) {
+  const parts = [];
+  if (ov.brightness !== 100) parts.push(`brightness(${ov.brightness}%)`);
+  if (ov.contrast !== 100) parts.push(`contrast(${ov.contrast}%)`);
+  if (ov.saturate !== 100) parts.push(`saturate(${ov.saturate}%)`);
+  if (ov.hue !== 0) parts.push(`hue-rotate(${ov.hue}deg)`);
+  return parts.length ? parts.join(' ') : 'none';
 }
 
 function onSegmentEnter(seg, clip, t) {
   for (const c of state.clips) {
     if (c.kind === 'video' && c !== clip) c.el.pause();
   }
-  if (clip.kind === 'video') {
-    const into = Math.max(0, t - seg.start);
-    const dur = clip.el.duration || 0;
-    clip.el.currentTime = dur ? into % dur : 0;
-    if (state.playing) clip.el.play().catch(() => {});
-    else clip.el.pause();
-  }
+  if (clip.kind !== 'video') return;
+
+  const ov = seg.ov || DEFAULT_OV;
+  const dur = clip.el.duration || 0;
+  const into = Math.max(0, t - seg.start);
+  const start = Math.min(ov.inPoint, Math.max(0, dur - 0.05));
+  clip.el.currentTime = dur ? start + (into % Math.max(0.05, dur - start)) : 0;
+  if (clip.gain) clip.gain.gain.value = ov.volume;
+  if (state.playing) clip.el.play().catch(() => {});
+  else clip.el.pause();
 }
 
 /* ============================================================ waveform == */
@@ -484,6 +541,7 @@ function tick() {
     state.cursor = t;
     drawFrame(t);
     drawWave();
+    markPlayingSlot();
     $('time').textContent = `${fmt(t)} / ${fmt(state.duration)}`;
     if (state.exporting) setExportProgress(t / state.duration);
   }
@@ -643,6 +701,192 @@ function setExportProgress(p) {
   $('exportBar').style.width = `${pct}%`;
   $('exportPct').textContent = `${pct}%`;
 }
+
+/* ============================================================ timeline == */
+
+const TL_PX_PER_SEC = 130;
+
+/** Thumbnail, number and edited dot for one slot - cheap enough to call live. */
+function paintSlot(el, i) {
+  const seg = state.segments[i];
+  if (!el || !seg) return;
+  const clip = state.clips.find((c) => c.id === seg.clipId);
+  el.style.backgroundImage = clip ? `url(${clip.thumb})` : '';
+  el.innerHTML =
+    `<span class="n">${i + 1}</span>` +
+    (isEdited(state.overrides[i]) ? '<span class="edited" title="Edited"></span>' : '');
+  el.title = clip ? `${i + 1} · ${clip.name}` : `${i + 1}`;
+}
+
+function renderTimeline() {
+  const tl = $('timeline');
+  tl.innerHTML = '';
+
+  if (!state.segments.length) {
+    tl.innerHTML = '<div class="tl-empty">Load a song and some clips to build the timeline.</div>';
+    return;
+  }
+
+  state.segments.forEach((seg, i) => {
+    const el = document.createElement('div');
+    el.className = 'tl-slot';
+    el.dataset.i = i;
+    // Constant pixels-per-second, so a fast slot always looks shorter than a
+    // slow one no matter how long the song is.
+    el.style.width = `${Math.max(26, (seg.end - seg.start) * TL_PX_PER_SEC)}px`;
+    if (i === state.selected) el.classList.add('selected');
+    paintSlot(el, i);
+
+    el.addEventListener('click', () => selectSlot(i, true));
+
+    // Drop a tile from the clip list to swap what plays here.
+    el.addEventListener('dragover', (e) => {
+      if (![...e.dataTransfer.types].includes('text/plain')) return;
+      e.preventDefault();
+      el.classList.add('drop-target');
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('drop-target'));
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      el.classList.remove('drop-target');
+      const id = Number(e.dataTransfer.getData('text/plain'));
+      if (!state.clips.some((c) => c.id === id)) return;
+      ovFor(i).clipId = id;
+      selectSlot(i, false);
+      rebuild();
+    });
+
+    tl.appendChild(el);
+  });
+  markPlayingSlot();
+}
+
+/** Highlight the slot under the playhead without rebuilding the strip. */
+let playingSlot = -1;
+function markPlayingSlot() {
+  const seg = segmentAt(state.cursor);
+  const i = seg ? state.segments.indexOf(seg) : -1;
+  if (i === playingSlot) return;
+  const tl = $('timeline');
+  const prev = tl.children[playingSlot];
+  if (prev && prev.classList) prev.classList.remove('playing');
+  const now = tl.children[i];
+  if (now && now.classList) {
+    now.classList.add('playing');
+    if (state.playing) now.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+  playingSlot = i;
+}
+
+function selectSlot(i, seek) {
+  state.selected = i;
+  if (seek) {
+    const seg = state.segments[i];
+    if (seg) {
+      state.cursor = seg.start + 0.001;
+      lastSegment = null;
+      if (state.playing) play(state.cursor);
+      else { drawFrame(state.cursor); drawWave(); }
+    }
+  }
+  [...$('timeline').children].forEach((el, idx) =>
+    el.classList && el.classList.toggle('selected', idx === i)
+  );
+  syncInspector();
+}
+
+/* =========================================================== inspector == */
+
+function syncInspector() {
+  const i = state.selected;
+  const seg = i != null ? state.segments[i] : null;
+  $('inspector').hidden = !seg;
+  if (!seg) return;
+
+  const ov = state.overrides[i] || DEFAULT_OV;
+  const clip = state.clips.find((c) => c.id === seg.clipId);
+  const isVideo = clip && clip.kind === 'video';
+
+  $('inspTitle').textContent = `Slot ${i + 1}`;
+  $('inspMeta').textContent =
+    `${fmtMs(seg.start)} → ${fmtMs(seg.end)} · ${(seg.end - seg.start).toFixed(2)}s` +
+    (clip ? ` · ${clip.name}` : '');
+
+  const sel = $('inspClip');
+  sel.innerHTML =
+    '<option value="">Auto (follow clip order)</option>' +
+    state.clips
+      .map((c) => `<option value="${c.id}">${c.kind === 'video' ? '▶' : '◼'} ${c.name}</option>`)
+      .join('');
+  sel.value = ov.clipId == null ? '' : String(ov.clipId);
+
+  $('inspVolField').hidden = !isVideo;
+  $('inspTrimField').hidden = !isVideo;
+  if (isVideo) {
+    $('inspTrim').max = Math.max(0.1, clip.duration - 0.1).toFixed(1);
+    $('inspTrim').value = Math.min(ov.inPoint, clip.duration);
+  }
+
+  $('inspVol').value = Math.round(ov.volume * 100);
+  $('inspZoom').value = Math.round(ov.zoom * 100);
+  $('inspBright').value = ov.brightness;
+  $('inspContrast').value = ov.contrast;
+  $('inspSat').value = ov.saturate;
+  $('inspHue').value = ov.hue;
+  $('inspMirror').checked = ov.mirror;
+  syncInspectorLabels();
+}
+
+function syncInspectorLabels() {
+  $('inspVolVal').textContent = `${$('inspVol').value}%`;
+  $('inspTrimVal').textContent = `${Number($('inspTrim').value).toFixed(1)}s`;
+  $('inspZoomVal').textContent = `${$('inspZoom').value}%`;
+  $('inspBrightVal').textContent = `${$('inspBright').value}%`;
+  $('inspContrastVal').textContent = `${$('inspContrast').value}%`;
+  $('inspSatVal').textContent = `${$('inspSat').value}%`;
+  $('inspHueVal').textContent = `${$('inspHue').value}°`;
+}
+
+/** Read the inspector controls back into the selected slot's override. */
+function applyInspector() {
+  const i = state.selected;
+  if (i == null || !state.segments[i]) return;
+  const ov = ovFor(i);
+
+  const pick = $('inspClip').value;
+  ov.clipId = pick === '' ? null : Number(pick);
+  ov.volume = Number($('inspVol').value) / 100;
+  ov.inPoint = Number($('inspTrim').value);
+  ov.zoom = Number($('inspZoom').value) / 100;
+  ov.brightness = Number($('inspBright').value);
+  ov.contrast = Number($('inspContrast').value);
+  ov.saturate = Number($('inspSat').value);
+  ov.hue = Number($('inspHue').value);
+  ov.mirror = $('inspMirror').checked;
+
+  syncInspectorLabels();
+
+  const seg = state.segments[i];
+  seg.ov = ov; // the slot may have been built before this override existed
+  if (ov.clipId != null) seg.clipId = ov.clipId;
+  else {
+    const order = state.order.filter((id) => state.clips.some((c) => c.id === id));
+    if (order.length) seg.clipId = order[i % order.length];
+  }
+
+  // Touch only this slot. A full rebuild() here would re-create every timeline
+  // node on every slider tick, which stutters badly on a long song.
+  paintSlot($('timeline').children[i], i);
+  lastSegment = null; // re-enter the slot so a swap or new in-point applies now
+  if (!state.playing) drawFrame(state.cursor);
+}
+
+const fmtMs = (s) => {
+  s = Math.max(0, s || 0);
+  const m = Math.floor(s / 60);
+  return `${m}:${String((s % 60).toFixed(1)).padStart(4, '0')}`;
+};
 
 /* ================================================================== ui == */
 
@@ -804,6 +1048,42 @@ $('bpmReset').addEventListener('click', () => {
   if (state.analysis) setBpm(state.analysis.bpm);
 });
 
+for (const id of ['inspClip', 'inspVol', 'inspTrim', 'inspZoom', 'inspBright',
+                  'inspContrast', 'inspSat', 'inspHue', 'inspMirror']) {
+  $(id).addEventListener('input', applyInspector);
+}
+
+$('inspClose').addEventListener('click', () => {
+  state.selected = null;
+  syncInspector();
+  [...$('timeline').children].forEach((el) => el.classList && el.classList.remove('selected'));
+});
+
+$('inspReset').addEventListener('click', () => {
+  if (state.selected == null) return;
+  state.overrides[state.selected] = { ...DEFAULT_OV };
+  syncInspector();
+  lastSegment = null;
+  rebuild();
+});
+
+$('inspApplyAll').addEventListener('click', () => {
+  if (state.selected == null) return;
+  const src = state.overrides[state.selected];
+  if (!src) return;
+  // Look only - clip assignment, trim and volume stay per slot.
+  for (let i = 0; i < state.segments.length; i++) {
+    const ov = ovFor(i);
+    ov.zoom = src.zoom;
+    ov.brightness = src.brightness;
+    ov.contrast = src.contrast;
+    ov.saturate = src.saturate;
+    ov.hue = src.hue;
+    ov.mirror = src.mirror;
+  }
+  rebuild();
+});
+
 $('aspect').addEventListener('change', setAspect);
 $('volume').addEventListener('input', (e) => (master.gain.value = Number(e.target.value)));
 $('clipAudio').addEventListener('change', (e) => (clipBus.gain.value = Number(e.target.value)));
@@ -874,9 +1154,10 @@ window.addEventListener('resize', () => {
 });
 
 // Handy from the devtools console when something looks off.
-window.beatcut = { state, audioCtx, play, pause, rebuild, startExport };
+window.beatcut = { state, audioCtx, play, pause, rebuild, startExport, selectSlot };
 
 setAspect();
 syncLabels();
 updateUi();
 drawWave();
+renderTimeline();
