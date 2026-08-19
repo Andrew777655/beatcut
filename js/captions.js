@@ -5,6 +5,8 @@
 
 /* ============================================================== drawing == */
 
+import { FFT } from './analysis.js';
+
 function wrapLines(ctx, text, maxWidth) {
   const out = [];
   for (const paragraph of text.split('\n')) {
@@ -144,28 +146,116 @@ export function distribute(lines, beats, startTime, beatsPerLine, fallbackEnd) {
 
 /* ========================================================= transcription == */
 
+// Multilingual first: English-only variants are markedly more brittle on sung
+// vocals, and useless outright on a track that isn't in English.
+// Precision is picked per device: fp16 on WebGPU is near-full quality at half
+// the download, while on CPU only the 8-bit weights run at a tolerable speed.
+// q8 does cost accuracy, which is part of why the first version read badly.
 const MODELS = {
-  'tiny.en': 'Xenova/whisper-tiny.en',
-  'base.en': 'Xenova/whisper-base.en',
-  base: 'Xenova/whisper-base',
+  base: { repo: 'Xenova/whisper-base', gpu: 'fp16', cpu: 'q8', multilingual: true },
+  small: { repo: 'Xenova/whisper-small', gpu: 'fp16', cpu: 'q8', multilingual: true },
+  'large-v3-turbo': {
+    repo: 'onnx-community/whisper-large-v3-turbo',
+    gpu: 'q4', cpu: 'q4', multilingual: true,
+  },
+  'tiny.en': { repo: 'Xenova/whisper-tiny.en', gpu: 'fp32', cpu: 'q8', multilingual: false },
+  'base.en': { repo: 'Xenova/whisper-base.en', gpu: 'fp16', cpu: 'q8', multilingual: false },
 };
 
-let cachedPipeline = null;
-let cachedModelKey = null;
+/* -------------------------------------------------- vocal isolation ------ */
 
-/** 16 kHz mono Float32 - what Whisper expects. */
-function toMono16k(audioBuffer) {
-  const chans = audioBuffer.numberOfChannels;
-  const len = audioBuffer.length;
-  const mono = new Float32Array(len);
-  for (let c = 0; c < chans; c++) {
-    const data = audioBuffer.getChannelData(c);
-    for (let i = 0; i < len; i++) mono[i] += data[i] / chans;
+const ISO_FFT = 2048;
+const ISO_HOP = 512;
+
+function hann(n) {
+  const w = new Float32Array(n);
+  for (let i = 0; i < n; i++) w[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (n - 1));
+  return w;
+}
+
+/**
+ * Crude vocal isolation, used only to feed the transcriber - never for playback
+ * or export.
+ *
+ * Lead vocals are almost always panned dead centre, so per frequency bin the
+ * left and right channels carry near-identical energy; guitars, synths, pads and
+ * reverb are spread wider. Keeping the bins where the two channels agree, and
+ * band-limiting to the vocal range to drop kick, bass and cymbals, strips a lot
+ * of the backing track. It is not source separation - a centred kick still gets
+ * through - but it noticeably cleans up what Whisper has to listen to.
+ *
+ * On a mono file only the band-limiting applies, which still helps.
+ */
+export function isolateVocals(buffer) {
+  const sr = buffer.sampleRate;
+  const n = buffer.length;
+  const L = buffer.getChannelData(0);
+  const R = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : L;
+
+  const fft = new FFT(ISO_FFT);
+  const win = hann(ISO_FFT);
+  const out = new Float32Array(n);
+  const norm = new Float32Array(n);
+
+  const lre = new Float32Array(ISO_FFT);
+  const lim = new Float32Array(ISO_FFT);
+  const rre = new Float32Array(ISO_FFT);
+  const rim = new Float32Array(ISO_FFT);
+
+  const loBin = Math.floor((180 * ISO_FFT) / sr);
+  const hiBin = Math.ceil((7000 * ISO_FFT) / sr);
+  const half = ISO_FFT / 2;
+
+  for (let pos = 0; pos + ISO_FFT <= n; pos += ISO_HOP) {
+    for (let i = 0; i < ISO_FFT; i++) {
+      lre[i] = L[pos + i] * win[i]; lim[i] = 0;
+      rre[i] = R[pos + i] * win[i]; rim[i] = 0;
+    }
+    fft.transform(lre, lim);
+    fft.transform(rre, rim);
+
+    for (let b = 0; b < ISO_FFT; b++) {
+      const mirrored = b < half ? b : ISO_FFT - b; // spectrum is symmetric
+      const magL = Math.hypot(lre[b], lim[b]);
+      const magR = Math.hypot(rre[b], rim[b]);
+      const peak = Math.max(magL, magR);
+
+      // 1 when both channels carry the same energy here, 0 when hard-panned.
+      let w = peak > 1e-9 ? Math.min(magL, magR) / peak : 0;
+      w *= w;
+      if (mirrored < loBin || mirrored > hiBin) w *= 0.08;
+
+      lre[b] = ((lre[b] + rre[b]) * 0.5) * w;
+      lim[b] = ((lim[b] + rim[b]) * 0.5) * w;
+    }
+
+    fft.inverse(lre, lim);
+    for (let i = 0; i < ISO_FFT; i++) {
+      out[pos + i] += lre[i] * win[i];
+      norm[pos + i] += win[i] * win[i];
+    }
   }
-  const ratio = audioBuffer.sampleRate / 16000;
+
+  for (let i = 0; i < n; i++) if (norm[i] > 1e-6) out[i] /= norm[i];
+
+  let peak = 0;
+  for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(out[i]));
+  if (peak > 1e-6) {
+    const g = 0.95 / peak;
+    for (let i = 0; i < n; i++) out[i] *= g;
+  }
+  return { data: out, sampleRate: sr };
+}
+
+let cachedPipeline = null;
+let cachedKey = null;
+
+/** 16 kHz - what Whisper expects. */
+function resampleTo16k(mono, sampleRate) {
+  const ratio = sampleRate / 16000;
   if (Math.abs(ratio - 1) < 1e-6) return mono;
 
-  const outLen = Math.floor(len / ratio);
+  const outLen = Math.floor(mono.length / ratio);
   const out = new Float32Array(outLen);
   for (let i = 0; i < outLen; i++) {
     const x = i * ratio;
@@ -178,6 +268,17 @@ function toMono16k(audioBuffer) {
   return out;
 }
 
+function downmix(audioBuffer) {
+  const chans = audioBuffer.numberOfChannels;
+  const len = audioBuffer.length;
+  const mono = new Float32Array(len);
+  for (let c = 0; c < chans; c++) {
+    const data = audioBuffer.getChannelData(c);
+    for (let i = 0; i < len; i++) mono[i] += data[i] / chans;
+  }
+  return mono;
+}
+
 /**
  * Transcribe with Whisper, in this tab. The model is fetched from a CDN the
  * first time and then served from the browser cache; the audio itself never
@@ -186,8 +287,9 @@ function toMono16k(audioBuffer) {
  * Accuracy warning for callers: Whisper is trained on speech. Sung vocals over
  * a full mix transcribe poorly - treat the result as a draft to correct.
  */
-export async function transcribe(audioBuffer, modelKey, onStatus) {
-  const model = MODELS[modelKey] || MODELS['base.en'];
+export async function transcribe(audioBuffer, opts, onStatus) {
+  const { modelKey = 'base', language = '', isolate = true } = opts || {};
+  const model = MODELS[modelKey] || MODELS.base;
   onStatus({ phase: 'load', message: 'Loading transcription library…' });
 
   let pipeline;
@@ -202,31 +304,60 @@ export async function transcribe(audioBuffer, modelKey, onStatus) {
     );
   }
 
-  if (!cachedPipeline || cachedModelKey !== modelKey) {
-    onStatus({ phase: 'download', message: `Downloading ${model}…`, progress: 0 });
-    cachedPipeline = await pipeline('automatic-speech-recognition', model, {
-      dtype: 'q8',
-      progress_callback: (p) => {
-        if (p && p.status === 'progress' && p.total) {
-          onStatus({
-            phase: 'download',
-            message: `Downloading model… ${Math.round((p.loaded / p.total) * 100)}%`,
-            progress: p.loaded / p.total,
-          });
-        }
-      },
-    });
-    cachedModelKey = modelKey;
+  // WebGPU is dramatically faster and makes the bigger models usable at all.
+  const device = navigator.gpu ? 'webgpu' : 'wasm';
+  const key = `${modelKey}|${device}`;
+
+  if (!cachedPipeline || cachedKey !== key) {
+    onStatus({ phase: 'download', message: `Downloading ${model.repo}…`, progress: 0 });
+    try {
+      cachedPipeline = await pipeline('automatic-speech-recognition', model.repo, {
+        dtype: device === 'webgpu' ? model.gpu : model.cpu,
+        device,
+        progress_callback: (p) => {
+          if (p && p.status === 'progress' && p.total) {
+            onStatus({
+              phase: 'download',
+              message: `Downloading model… ${Math.round((p.loaded / p.total) * 100)}%`,
+              progress: p.loaded / p.total,
+            });
+          }
+        },
+      });
+    } catch (err) {
+      cachedPipeline = null;
+      throw new Error(
+        `Could not load ${model.repo}. Larger models need a lot of memory — ` +
+        `try a smaller one. (${(err && err.message) || err})`
+      );
+    }
+    cachedKey = key;
   }
 
-  onStatus({ phase: 'run', message: 'Listening to the track…' });
-  const audio = toMono16k(audioBuffer);
+  onStatus({
+    phase: 'prep',
+    message: isolate ? 'Stripping the backing track…' : 'Preparing audio…',
+  });
+  await new Promise((r) => setTimeout(r, 10)); // let the message paint
 
-  const result = await cachedPipeline(audio, {
+  const source = isolate
+    ? isolateVocals(audioBuffer)
+    : { data: downmix(audioBuffer), sampleRate: audioBuffer.sampleRate };
+  const audio = resampleTo16k(source.data, source.sampleRate);
+
+  onStatus({ phase: 'run', message: 'Listening to the vocal…' });
+
+  const genOpts = {
     return_timestamps: true,
     chunk_length_s: 30,
     stride_length_s: 5,
-  });
+  };
+  if (model.multilingual) {
+    genOpts.task = 'transcribe';
+    if (language) genOpts.language = language;
+  }
+
+  const result = await cachedPipeline(audio, genOpts);
 
   const chunks = (result && result.chunks) || [];
   return chunks

@@ -1343,7 +1343,11 @@ async function runTranscribe() {
   try {
     const result = await transcribe(
       state.audio.buffer,
-      $('capModel').value,
+      {
+        modelKey: $('capModel').value,
+        language: $('capLang').value,
+        isolate: $('capIsolate').checked,
+      },
       (s) => { status.textContent = s.message; }
     );
 

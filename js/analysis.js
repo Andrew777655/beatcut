@@ -14,7 +14,7 @@ const FRAME_LAG = FFT_SIZE / 2 / ANALYSIS_RATE + 0.023;
 
 /* ---------------------------------------------------------------- FFT ---- */
 
-class FFT {
+export class FFT {
   constructor(n) {
     this.n = n;
     this.levels = Math.log2(n) | 0;
@@ -50,6 +50,17 @@ class FFT {
           im[j] += tim;
         }
       }
+    }
+  }
+
+  /** In-place inverse: conj -> forward -> conj -> scale. */
+  inverse(re, im) {
+    const n = this.n;
+    for (let i = 0; i < n; i++) im[i] = -im[i];
+    this.transform(re, im);
+    for (let i = 0; i < n; i++) {
+      re[i] /= n;
+      im[i] = -im[i] / n;
     }
   }
 }

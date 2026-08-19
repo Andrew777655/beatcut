@@ -78,8 +78,8 @@ default is the usual look: heavy white text, thick black outline, lower third.
 
 Optional, folded away under the captions box. It runs OpenAI's Whisper **in this
 tab** via `transformers.js` — your audio is never uploaded — but the model itself
-downloads once from a CDN (~40 MB for tiny, ~80 MB for base) and is cached by the
-browser afterwards. So this one feature needs a connection the first time.
+downloads once from a CDN (40 MB to 800 MB depending on the model) and is cached
+by the browser afterwards. So this one feature needs a connection the first time.
 
 **Set your expectations low.** Whisper is trained on speech. Sung vocals sitting
 in a full mix are a different problem, and results range from decent on a sparse
@@ -87,6 +87,34 @@ track with clear vocals to unusable on a dense one. It is there to save you typi
 a first draft, not to produce a finished caption track. *Snap lines to the beat
 grid* pulls whatever it returns onto the nearest beat, which fixes the timing even
 when the words need work — and the timing is the part that normally takes longest.
+
+### Getting better words out of it
+
+**Strip the backing track first** (on by default) is the biggest single lever, and
+it isn't a model at all. Lead vocals are almost always panned dead centre, so per
+frequency bin the left and right channels carry near-identical energy, while
+guitars, synths, pads and reverb are spread wider. Keeping only the bins where the
+channels agree, and band-limiting to 180 Hz–7 kHz to drop kick, bass and cymbals,
+removes a lot of what Whisper is fighting. On test tones a hard-panned instrument
+is removed completely and a centred bass note drops by 92 %, while a centred
+vocal-range tone passes through untouched. It costs about 3 seconds on a
+3-minute song. It is not true source separation — a centred kick still gets
+through — and on a mono file only the band-limiting applies.
+
+**Use a multilingual model.** The `.en` models are trained solely on English
+speech and are markedly more brittle on singing, quite apart from being useless on
+a track that isn't in English. Base multilingual is the default for that reason.
+
+**Go bigger if it's still wrong.** Small is a clear step up from Base; Large v3
+turbo is better again. The cost is download size and runtime — Large is ~800 MB
+and slow without WebGPU.
+
+**Set the Language** instead of leaving it on auto-detect. Sung vocals confuse
+language detection, and a wrong guess wrecks the whole transcript.
+
+Precision is chosen automatically: `fp16` on WebGPU, 8-bit weights on CPU, since
+full precision on CPU is unusably slow. The 8-bit path does cost some accuracy —
+if your browser has WebGPU (Chrome and Edge do), you're already on the better one.
 
 Instrumental tracks correctly come back with nothing.
 
