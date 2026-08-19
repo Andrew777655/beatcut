@@ -270,6 +270,30 @@ function resampleTo16k(mono, sampleRate) {
   return out;
 }
 
+/**
+ * A duck-typed AudioBuffer covering just [startSec, endSec], backed by
+ * subarrays so nothing is copied. Lets the whole chain - isolation included -
+ * run on the trimmed window only.
+ */
+function sliceBuffer(audioBuffer, startSec, endSec) {
+  const sr = audioBuffer.sampleRate;
+  const from = Math.max(0, Math.floor(startSec * sr));
+  const to = Math.min(audioBuffer.length, Math.ceil(endSec * sr));
+  if (to - from < sr * 0.2) return audioBuffer; // too short to be meaningful
+
+  const views = [];
+  for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+    views.push(audioBuffer.getChannelData(c).subarray(from, to));
+  }
+  return {
+    sampleRate: sr,
+    length: to - from,
+    numberOfChannels: views.length,
+    duration: (to - from) / sr,
+    getChannelData: (c) => views[c],
+  };
+}
+
 function downmix(audioBuffer) {
   const chans = audioBuffer.numberOfChannels;
   const len = audioBuffer.length;
@@ -294,20 +318,39 @@ function downmix(audioBuffer) {
  * a new line starts after `perLine` words, or wherever the singer pauses.
  */
 export function groupWords(words, perLine, maxGap = 0.7) {
+  // Whisper leaves the closing timestamp null on the last word of every chunk,
+  // so discarding words without a full pair silently loses one word per chunk
+  // boundary - and with it whole stretches of a long track. Infer the end
+  // instead, from the next word or a short default.
+  const norm = [];
+  for (let i = 0; i < words.length; i++) {
+    const text = (words[i].text || '').trim();
+    const ts = words[i].timestamp || [];
+    const start = ts[0];
+    if (!text || start == null) continue;
+
+    let end = ts[1];
+    if (end == null) {
+      let nextStart = null;
+      for (let j = i + 1; j < words.length; j++) {
+        const t = words[j].timestamp && words[j].timestamp[0];
+        if (t != null) { nextStart = t; break; }
+      }
+      end = nextStart != null ? Math.min(nextStart, start + 1) : start + 0.35;
+    }
+    if (end <= start) end = start + 0.12;
+    norm.push({ text, start, end });
+  }
+  norm.sort((a, b) => a.start - b.start);
+
   const lines = [];
   let cur = [];
-
-  for (const w of words) {
-    const text = (w.text || '').trim();
-    const start = w.timestamp && w.timestamp[0];
-    const end = w.timestamp && w.timestamp[1];
-    if (!text || start == null || end == null) continue;
-
-    if (cur.length && (cur.length >= perLine || start - cur[cur.length - 1].end > maxGap)) {
+  for (const wd of norm) {
+    if (cur.length && (cur.length >= perLine || wd.start - cur[cur.length - 1].end > maxGap)) {
       lines.push(cur);
       cur = [];
     }
-    cur.push({ text, start, end });
+    cur.push(wd);
   }
   if (cur.length) lines.push(cur);
 
@@ -318,13 +361,17 @@ export function groupWords(words, perLine, maxGap = 0.7) {
     end: ws[ws.length - 1].end,
   }));
 
-  // A line that vanishes the instant the last word ends flickers. Hold it a
-  // beat longer, but never past the next line or through a long instrumental.
+  // Keep the list strictly ordered and non-overlapping: a caption whose end
+  // lands at or before its start never renders at all, which reads on screen
+  // as "it only transcribed some of it".
   for (let i = 0; i < out.length; i++) {
-    const limit = i + 1 < out.length ? out[i + 1].start : Infinity;
-    out[i].end = Math.min(limit, out[i].end + 1.2);
+    const next = i + 1 < out.length ? out[i + 1].start : Infinity;
+    // A line that vanishes the instant its last word ends flickers, so hold it
+    // a moment - but never past the next line or through a long instrumental.
+    out[i].end = Math.min(next, out[i].end + 1.2);
+    if (out[i].end <= out[i].start) out[i].end = Math.min(next, out[i].start + 0.3);
   }
-  return out;
+  return out.filter((c) => c.end > c.start);
 }
 
 export async function transcribe(audioBuffer, opts, onStatus) {
@@ -335,6 +382,8 @@ export async function transcribe(audioBuffer, opts, onStatus) {
     wordTiming = true,
     wordsPerLine = 4,
     processing = 'cpu',
+    startSec = 0,
+    endSec = Infinity,
   } = opts || {};
   const model = MODELS[modelKey] || MODELS.base;
   onStatus({ phase: 'load', message: 'Loading transcription library…' });
@@ -388,9 +437,12 @@ export async function transcribe(audioBuffer, opts, onStatus) {
   });
   await new Promise((r) => setTimeout(r, 10)); // let the message paint
 
+  // Only the part of the song the edit actually uses. On a 3-minute track
+  // trimmed to a 15-second hook that is a twelfth of the work.
+  const window = sliceBuffer(audioBuffer, startSec, endSec);
   const source = isolate
-    ? isolateVocals(audioBuffer)
-    : { data: downmix(audioBuffer), sampleRate: audioBuffer.sampleRate };
+    ? isolateVocals(window)
+    : { data: downmix(window), sampleRate: window.sampleRate };
   const audio = resampleTo16k(source.data, source.sampleRate);
 
   onStatus({ phase: 'run', message: 'Listening to the vocal…' });
@@ -426,15 +478,32 @@ export async function transcribe(audioBuffer, opts, onStatus) {
   const raw = usedWordTiming
     ? groupWords(chunks, wordsPerLine)
     : chunks
-        .map((c, i) => ({
-          id: `w${Date.now()}_${i}`,
-          text: (c.text || '').trim(),
-          start: c.timestamp && c.timestamp[0] != null ? c.timestamp[0] : 0,
-          end: c.timestamp && c.timestamp[1] != null ? c.timestamp[1] : 0,
-        }))
-        .filter((c) => c.end > c.start);
+        .map((c, i) => {
+          const ts = c.timestamp || [];
+          const start = ts[0] != null ? ts[0] : 0;
+          // Same open-ended-chunk problem as the word path: a null end here
+          // used to drop the segment entirely.
+          let end = ts[1];
+          if (end == null) {
+            const next = chunks[i + 1] && chunks[i + 1].timestamp;
+            end = next && next[0] != null ? next[0] : start + 2;
+          }
+          return { id: `w${Date.now()}_${i}`, text: (c.text || '').trim(), start, end };
+        })
+        .filter((c) => c.text && c.end > c.start);
 
-  return { ...cleanChunks(raw), wordTiming: usedWordTiming };
+  // Timestamps come back relative to the slice; shift them into song time.
+  const offset = window === audioBuffer ? 0 : startSec;
+  const shifted = offset
+    ? raw.map((c) => ({ ...c, start: c.start + offset, end: c.end + offset }))
+    : raw;
+
+  return {
+    ...cleanChunks(shifted),
+    wordTiming: usedWordTiming,
+    analysedFrom: offset,
+    analysedSeconds: window.duration != null ? window.duration : audioBuffer.duration,
+  };
 }
 
 /** Normalised form used to spot a line the model is stuck repeating. */

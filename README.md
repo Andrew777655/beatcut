@@ -81,6 +81,12 @@ tab** via `transformers.js` — your audio is never uploaded — but the model i
 downloads once from a CDN (40 MB to 800 MB depending on the model) and is cached
 by the browser afterwards. So this one feature needs a connection the first time.
 
+**Only the trimmed window is transcribed.** If the edit runs 20 s–35 s of a
+three-minute track, Whisper only ever sees those 15 seconds — a twelfth of the
+work, and no time spent on audio the video will never show. Set **Edit length**
+and **Start of the song part** *before* transcribing. Timestamps are shifted back
+into song time afterwards, so the captions still line up with the timeline.
+
 **Set your expectations low.** Whisper is trained on speech. Sung vocals sitting
 in a full mix are a different problem, and results range from decent on a sparse
 track with clear vocals to unusable on a dense one. It is there to save you typing
@@ -147,6 +153,16 @@ returning later in the song is left alone, because counting total occurrences
 would delete the very line you most want on screen. The status line reports how
 many junk lines were removed, and distinguishes a genuine loop from a track that
 simply read as music.
+
+### If only part of the track gets captioned
+
+Whisper processes long audio in 30-second chunks, and leaves the closing
+timestamp `null` on the last word of each chunk. Words carrying a half-open
+timestamp used to be discarded, which quietly lost a word at every chunk
+boundary — and any caption line whose end landed at or before its start never
+rendered at all, so whole stretches simply never appeared. Missing ends are now
+inferred from the following word, and lines are forced into a strictly ordered,
+non-overlapping sequence before they are used.
 
 If a track comes back empty or heavily filtered, the audio genuinely had no
 intelligible vocal for the model. Worth trying in order: a bigger model, an

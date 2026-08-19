@@ -1393,11 +1393,15 @@ async function runTranscribe() {
         wordTiming: $('capTiming').value === 'word',
         wordsPerLine: Number($('capWords').value),
         processing: $('capProc').value,
+        // Only the trimmed window - no point transcribing three minutes of a
+        // song for a fifteen second edit.
+        startSec: state.tStart,
+        endSec: state.tEnd || state.audio.buffer.duration,
       },
       (s) => { status.textContent = s.message; }
     );
 
-    const { captions: cleaned, dropped, looped, wordTiming } = result;
+    const { captions: cleaned, dropped, looped, wordTiming, analysedSeconds } = result;
 
     if (!cleaned.length) {
       const advice = $('capIsolate').checked
@@ -1419,7 +1423,8 @@ async function runTranscribe() {
     $('capText').value = state.captions.map((c) => c.text).join('\n');
     renderCaptionList();
     status.textContent =
-      `${state.captions.length} lines, timed ${wordTiming ? 'per word' : 'per segment'}` +
+      `${state.captions.length} lines from ${Math.round(analysedSeconds)}s of audio, ` +
+      `timed ${wordTiming ? 'per word' : 'per segment'}` +
       (dropped ? `, ${dropped} junk lines removed` : '') +
       ' — expect mistakes on sung vocals; edit them below.';
     if (!state.playing) drawFrame(state.cursor);
