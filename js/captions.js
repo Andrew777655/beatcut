@@ -221,9 +221,11 @@ export function isolateVocals(buffer) {
       const peak = Math.max(magL, magR);
 
       // 1 when both channels carry the same energy here, 0 when hard-panned.
+      // Gated gently: squeezing this too hard leaves near-silence, and Whisper
+      // hallucinates loops on silence rather than admitting it heard nothing.
       let w = peak > 1e-9 ? Math.min(magL, magR) / peak : 0;
-      w *= w;
-      if (mirrored < loBin || mirrored > hiBin) w *= 0.08;
+      w = Math.pow(w, 1.5);
+      if (mirrored < loBin || mirrored > hiBin) w *= 0.15;
 
       lre[b] = ((lre[b] + rre[b]) * 0.5) * w;
       lim[b] = ((lim[b] + rim[b]) * 0.5) * w;
@@ -351,6 +353,13 @@ export async function transcribe(audioBuffer, opts, onStatus) {
     return_timestamps: true,
     chunk_length_s: 30,
     stride_length_s: 5,
+    // Whisper feeds its own previous output back in as context. On music that
+    // turns one bad guess into an endless loop of the same phrase - the classic
+    // ">> >> >>" / "I'm not. I'm not." failure. Cutting the feedback stops it.
+    condition_on_prev_tokens: false,
+    condition_on_previous_text: false,
+    no_repeat_ngram_size: 3,
+    repetition_penalty: 1.15,
   };
   if (model.multilingual) {
     genOpts.task = 'transcribe';
@@ -360,12 +369,62 @@ export async function transcribe(audioBuffer, opts, onStatus) {
   const result = await cachedPipeline(audio, genOpts);
 
   const chunks = (result && result.chunks) || [];
-  return chunks
+  const raw = chunks
     .map((c, i) => ({
       id: `w${Date.now()}_${i}`,
       text: (c.text || '').trim(),
       start: c.timestamp && c.timestamp[0] != null ? c.timestamp[0] : 0,
       end: c.timestamp && c.timestamp[1] != null ? c.timestamp[1] : 0,
     }))
-    .filter((c) => c.text && c.end > c.start);
+    .filter((c) => c.end > c.start);
+
+  return cleanChunks(raw);
+}
+
+/** Normalised form used to spot a line the model is stuck repeating. */
+const keyOf = (s) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, '').replace(/\s+/g, ' ').trim();
+
+/**
+ * Strip Whisper's non-speech artefacts and break repetition loops.
+ *
+ * Subtitle training data leaves it emitting ">>" speaker markers and bracketed
+ * tags like [Music], and on a dense instrumental it will lock onto one phrase
+ * and repeat it for the whole track. None of that belongs on screen.
+ *
+ * @returns {{captions:Array, dropped:number, looped:boolean}}
+ */
+export function cleanChunks(chunks) {
+  const seen = new Map();
+  const out = [];
+  let dropped = 0;
+
+  for (const c of chunks) {
+    let text = c.text
+      .replace(/>>+/g, ' ')                    // speaker-change markers
+      .replace(/[\[(][^\])]*[\])]/g, ' ')      // [Music], (applause), …
+      .replace(/[♪♫]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!text || !/[a-z0-9]/i.test(text)) { dropped++; continue; }
+
+    const key = keyOf(text);
+    if (!key) { dropped++; continue; }
+
+    // Same line back to back, or the model stuck on one phrase all track.
+    const prev = out[out.length - 1];
+    if (prev && keyOf(prev.text) === key) {
+      prev.end = Math.max(prev.end, c.end); // absorb, don't repeat
+      dropped++;
+      continue;
+    }
+    const count = (seen.get(key) || 0) + 1;
+    seen.set(key, count);
+    if (count > 3) { dropped++; continue; }
+
+    out.push({ ...c, text });
+  }
+
+  const total = chunks.length || 1;
+  return { captions: out, dropped, looped: dropped / total > 0.6 };
 }

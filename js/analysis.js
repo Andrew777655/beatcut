@@ -123,8 +123,13 @@ function makeBands(bins, loHz = 30, hiHz = 11000, count = 24) {
 
 /**
  * Half-wave rectified spectral flux, one value per STFT hop.
- * @returns {{full:Float32Array, low:Float32Array}} band-averaged flux, and a
- *   bass-only envelope (30-250 Hz) used to lock the beat phase to the kick.
+ *
+ * Separate envelopes per drum register, because "where are the hits" has a
+ * different answer per instrument: the kick carries the pulse, while hi-hat
+ * rolls and snare fills - the fast stuff in drill and trap - live up top and
+ * are invisible in a bass-weighted envelope.
+ *
+ * @returns {{full, low, mid, high}} all Float32Array, one entry per hop.
  */
 function onsetEnvelope(mono) {
   const fft = new FFT(FFT_SIZE);
@@ -136,12 +141,17 @@ function onsetEnvelope(mono) {
   const bins = FFT_SIZE / 2;
   const bands = makeBands(bins);
   const weightSum = bands.reduce((s, b) => s + b.weight, 0);
-  const lowLo = Math.max(1, Math.round((30 * FFT_SIZE) / ANALYSIS_RATE));
-  const lowHi = Math.round((250 * FFT_SIZE) / ANALYSIS_RATE);
+  const binOf = (hz) => Math.min(bins, Math.max(1, Math.round((hz * FFT_SIZE) / ANALYSIS_RATE)));
+  // kick and 808 / snare and clap body / hats, rides and roll transients
+  const lowLo = binOf(30), lowHi = binOf(250);
+  const midLo = binOf(200), midHi = binOf(2000);
+  const highLo = binOf(5000), highHi = binOf(10500);
 
   const frames = Math.max(0, Math.floor((mono.length - FFT_SIZE) / HOP));
   const full = new Float32Array(frames);
   const low = new Float32Array(frames);
+  const mid = new Float32Array(frames);
+  const high = new Float32Array(frames);
   const re = new Float32Array(FFT_SIZE);
   const im = new Float32Array(FFT_SIZE);
   let prev = new Float32Array(bins);
@@ -175,9 +185,17 @@ function onsetEnvelope(mono) {
     for (let b = lowLo; b < lowHi; b++) lowSum += rise[b];
     low[f] = lowSum / Math.max(1, lowHi - lowLo);
 
+    let midSum = 0;
+    for (let b = midLo; b < midHi; b++) midSum += rise[b];
+    mid[f] = midSum / Math.max(1, midHi - midLo);
+
+    let highSum = 0;
+    for (let b = highLo; b < highHi; b++) highSum += rise[b];
+    high[f] = highSum / Math.max(1, highHi - highLo);
+
     const swap = prev; prev = cur; cur = swap;
   }
-  return { full, low };
+  return { full, low, mid, high };
 }
 
 /** Subtract a centered moving average so slow loudness changes don't dominate. */
@@ -267,6 +285,17 @@ export function analyze(audioBuffer) {
   const env = detrend(raw.full, radius);
   const envLow = detrend(raw.low, radius);
 
+  // Kept for cut detection: which register you cut on is a creative choice.
+  // A shorter window here so a hi-hat roll stands out against the bar around it
+  // rather than being flattened by its own average.
+  const drumRadius = Math.round(fps * 0.18);
+  const bands = {
+    full: env,
+    low: envLow,
+    mid: detrend(raw.mid, drumRadius),
+    high: detrend(raw.high, drumRadius),
+  };
+
   // Phase envelope: bass-led, with some full-band detail so tracks without a
   // kick drum still lock on to something.
   const phaseEnv = new Float32Array(env.length);
@@ -300,6 +329,7 @@ export function analyze(audioBuffer) {
     offset,
     beats,
     envelope: phaseEnv,
+    bands,
     fps,
     duration,
   };
@@ -324,9 +354,17 @@ export function buildGrid(bpm, offsetSec, duration) {
   return beats;
 }
 
-/** Peak-picked onsets - an alternative to the rigid grid, for live/acoustic tracks. */
-export function pickOnsets(analysis, sensitivity = 1.4, minGapSec = 0.18) {
-  const { envelope: env, fps, duration } = analysis;
+/**
+ * Peak-picked onsets in one drum register.
+ *
+ * `band`: 'low' kick and 808, 'mid' snare and clap, 'high' hats, rides and
+ * rolls, 'full' the whole kit. Cutting on 'high' with a small minGap is what
+ * makes a drill hat roll produce a burst of fast cuts.
+ */
+export function pickOnsets(analysis, opts = {}) {
+  const { band = 'full', sensitivity = 1.4, minGapSec = 0.18 } = opts;
+  const { fps, duration } = analysis;
+  const env = (analysis.bands && analysis.bands[band]) || analysis.envelope;
   let mean = 0;
   for (let i = 0; i < env.length; i++) mean += env[i];
   mean /= env.length || 1;

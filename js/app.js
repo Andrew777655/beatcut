@@ -303,30 +303,29 @@ async function loadAudio(file) {
 
 /* ================================================= timeline generation == */
 
+/** The steady tempo grid. Captions snap to this even in drum modes. */
 function beatTimes() {
   const a = state.analysis;
   if (!a) return [];
   const nudge = Number($('offset').value) / 1000;
-
-  if ($('mode').value === 'onsets') {
-    const sense = Number($('sense').value);
-    return pickOnsets(a, sense).map((t) => t + nudge).filter((t) => t > 0);
-  }
   const bpm = Number($('bpm').value);
   return buildGrid(bpm, a.offset + nudge, a.duration).filter((t) => t > 0);
 }
 
-function rebuild() {
-  const beats = beatTimes();
-  const per = Number($('beatsPerCut').value);
-  const maxClips = Number($('maxClips').value);
-  const songEnd = state.audio ? state.audio.buffer.duration : 0;
-  const from = clamp(state.tStart, 0, Math.max(0, songEnd - 0.2));
-  const maxLen = Number($('editLength').value); // 0 = to the end of the song
-  const until = clamp(maxLen > 0 ? from + maxLen : songEnd, from + 0.2, songEnd);
+function drumHits() {
+  const a = state.analysis;
+  if (!a) return [];
+  const nudge = Number($('offset').value) / 1000;
+  return pickOnsets(a, {
+    band: $('drumBand').value,
+    sensitivity: Number($('sense').value),
+    minGapSec: Number($('minGap').value),
+  }).map((t) => t + nudge).filter((t) => t > 0);
+}
 
-  // Cut points: every `per` beats. Half-beat mode interpolates midpoints.
-  let cuts = [];
+/** Grid cuts every `per` beats; `per` below 1 interpolates midpoints. */
+function gridCuts(beats, per) {
+  const cuts = [];
   if (per < 1) {
     for (let i = 0; i < beats.length - 1; i++) {
       cuts.push(beats[i], (beats[i] + beats[i + 1]) / 2);
@@ -335,7 +334,51 @@ function rebuild() {
   } else {
     for (let i = 0; i < beats.length; i += per) cuts.push(beats[i]);
   }
-  cuts = cuts.filter((t) => t > from + 0.06 && t < until - 0.06);
+  return cuts;
+}
+
+/**
+ * Keep every grid cut, add drum hits that aren't crowding one.
+ * Accepted hits are collected separately: appending to the array being scanned
+ * breaks its sort order, and with it the neighbour lookup.
+ */
+function mergeCuts(grid, extra, minGap) {
+  const g = grid.slice().sort((a, b) => a - b);
+  const accepted = [];
+  let gi = 0;
+  let last = -Infinity;
+
+  for (const t of extra.slice().sort((a, b) => a - b)) {
+    while (gi < g.length && g[gi] < t) gi++;
+    const before = gi > 0 ? t - g[gi - 1] : Infinity;
+    const after = gi < g.length ? g[gi] - t : Infinity;
+    if (Math.min(before, after) < minGap) continue; // too close to a grid cut
+    if (t - last < minGap) continue;                // too close to a kept hit
+    accepted.push(t);
+    last = t;
+  }
+  return g.concat(accepted).sort((a, b) => a - b);
+}
+
+function cutTimes() {
+  const a = state.analysis;
+  if (!a) return [];
+  const mode = $('mode').value;
+  if (mode === 'onsets') return drumHits();
+
+  const cuts = gridCuts(beatTimes(), Number($('beatsPerCut').value));
+  if (mode !== 'hybrid') return cuts;
+  return mergeCuts(cuts, drumHits(), Number($('minGap').value));
+}
+
+function rebuild() {
+  const maxClips = Number($('maxClips').value);
+  const songEnd = state.audio ? state.audio.buffer.duration : 0;
+  const from = clamp(state.tStart, 0, Math.max(0, songEnd - 0.2));
+  const maxLen = Number($('editLength').value); // 0 = to the end of the song
+  const until = clamp(maxLen > 0 ? from + maxLen : songEnd, from + 0.2, songEnd);
+
+  const cuts = cutTimes().filter((t) => t > from + 0.06 && t < until - 0.06);
 
   const order = state.order.filter((id) => state.clips.some((c) => c.id === id));
   state.segments = [];
@@ -1351,13 +1394,18 @@ async function runTranscribe() {
       (s) => { status.textContent = s.message; }
     );
 
-    if (!result.length) {
-      status.textContent = 'No speech found. Instrumental tracks give nothing back.';
+    const { captions: cleaned, dropped, looped } = result;
+
+    if (!cleaned.length) {
+      status.textContent = looped || dropped
+        ? 'The model looped on this track instead of finding words. Try a bigger ' +
+          'model, or turn off "Strip the backing track first".'
+        : 'No speech found. Instrumental tracks give nothing back.';
       return;
     }
 
     const beats = beatTimes();
-    state.captions = result.map((c) => ({
+    state.captions = cleaned.map((c) => ({
       ...c,
       start: $('capSnap').checked ? snapToBeat(beats, c.start, 0.3) : c.start,
       end: $('capSnap').checked ? snapToBeat(beats, c.end, 0.3) : c.end,
@@ -1366,7 +1414,9 @@ async function runTranscribe() {
     $('capText').value = state.captions.map((c) => c.text).join('\n');
     renderCaptionList();
     status.textContent =
-      `${state.captions.length} lines — expect mistakes on sung vocals; edit them below.`;
+      `${state.captions.length} lines` +
+      (dropped ? `, ${dropped} junk lines removed` : '') +
+      ' — expect mistakes on sung vocals; edit them below.';
     if (!state.playing) drawFrame(state.cursor);
   } catch (err) {
     status.textContent = String((err && err.message) || err);
@@ -1460,6 +1510,7 @@ function syncLabels() {
   $('offsetVal').textContent = `${$('offset').value} ms`;
   $('intensityVal').textContent = `${$('intensity').value}%`;
   $('transLenVal').textContent = `${$('transLen').value} ms`;
+  $('minGapVal').textContent = `${Number($('minGap').value).toFixed(2)}s`;
   $('trimStartVal').textContent = fmtMs(Number($('trimStart').value));
   $('capSizeVal').textContent = `${Number($('capSize').value).toFixed(1)}%`;
   $('capOutlineVal').textContent = `${$('capOutline').value}%`;
@@ -1539,12 +1590,16 @@ $('trimReset').addEventListener('click', () => {
   rebuild();
 });
 
-for (const id of ['beatsPerCut', 'mode', 'bpm', 'sense', 'offset', 'maxClips', 'editLength']) {
+for (const id of ['beatsPerCut', 'mode', 'bpm', 'sense', 'offset', 'maxClips',
+                  'editLength', 'drumBand', 'minGap']) {
   $(id).addEventListener('input', () => {
     if (id === 'mode') {
-      const onsets = $('mode').value === 'onsets';
-      $('senseField').hidden = !onsets;
-      $('bpmField').hidden = onsets;
+      const mode = $('mode').value;
+      const usesDrums = mode === 'onsets' || mode === 'hybrid';
+      $('senseField').hidden = !usesDrums;
+      $('drumBandField').hidden = !usesDrums;
+      $('minGapField').hidden = !usesDrums;
+      $('bpmField').hidden = mode === 'onsets';
     }
     syncLabels();
     rebuild();

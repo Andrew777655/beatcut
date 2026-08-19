@@ -152,9 +152,25 @@
         <label class="field">
           Beat source
           <select id="mode">
-            <option value="grid" selected>Tempo grid (electronic / pop)</option>
-            <option value="onsets">Onset detection (live / irregular)</option>
+            <option value="grid" selected>Tempo grid (steady, electronic / pop)</option>
+            <option value="hybrid">Tempo grid + drum hits (drill / trap)</option>
+            <option value="onsets">Drum hits only (live / irregular)</option>
           </select>
+        </label>
+
+        <label class="field" id="drumBandField" hidden>
+          Cut on
+          <select id="drumBand">
+            <option value="high" selected>Hi-hats &amp; rolls</option>
+            <option value="mid">Snares &amp; claps</option>
+            <option value="low">Kick &amp; 808</option>
+            <option value="full">Whole kit</option>
+          </select>
+        </label>
+
+        <label class="field" id="minGapField" hidden>
+          Fastest cut <span class="val" id="minGapVal">0.12s</span>
+          <input type="range" id="minGap" min="0.04" max="0.6" step="0.01" value="0.12" />
         </label>
 
         <div class="field" id="bpmField">

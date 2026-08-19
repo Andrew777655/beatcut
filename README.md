@@ -112,6 +112,22 @@ and slow without WebGPU.
 **Set the Language** instead of leaving it on auto-detect. Sung vocals confuse
 language detection, and a wrong guess wrecks the whole transcript.
 
+### If it comes back as `>> >> >>` or one phrase on repeat
+
+That's Whisper's repetition-loop failure, and it means the model could not find
+speech but kept generating anyway. Whisper normally feeds its own previous output
+back in as context, which turns one bad guess into an endless echo, so that
+feedback is switched off here along with an n-gram repeat block. Anything that
+still slips through — `>>` speaker markers, `[Music]` and similar bracketed tags,
+a line repeating more than three times — is stripped before the captions are
+built, and the status line tells you how many junk lines were removed.
+
+If a track comes back empty or heavily filtered, the audio genuinely had no
+intelligible vocal for the model. Worth trying in order: a bigger model, an
+explicit Language, and toggling *Strip the backing track first* — isolation
+usually helps, but on a sparse mix it can leave too little signal, and Whisper
+hallucinates on near-silence rather than admitting it heard nothing.
+
 Precision is chosen automatically: `fp16` on WebGPU, 8-bit weights on CPU, since
 full precision on CPU is unusably slow. The 8-bit path does cost some accuracy —
 if your browser has WebGPU (Chrome and Edge do), you're already on the better one.
@@ -157,11 +173,40 @@ Do your global timing first, then polish individual slots.
 4 beats (one bar) is cinematic, ½ beat is frantic. This is the single biggest
 lever on how the edit feels.
 
-**Beat source** — *Tempo grid* assumes a steady tempo and lays down a perfect
-grid. Right for basically all electronic, pop, hip-hop, and anything produced to
-a click. *Onset detection* cuts on whatever transient it hears instead, which
-suits live recordings, acoustic tracks, and rubato playing. The **Sensitivity**
-slider then controls how many onsets qualify.
+**Beat source** — three ways of deciding where cuts land.
+
+*Tempo grid* lays down a perfect constant-tempo grid. Right for anything
+produced to a click, and it never drifts — but it also never reacts, so a
+hi-hat roll or a snare fill passes by unnoticed.
+
+*Tempo grid + drum hits* keeps every grid cut and **adds** cuts where the drums
+actually hit. This is the one for drill and trap: the edit stays locked to the
+bar, then bursts into fast cuts through a roll. Grid cuts are never dropped.
+
+*Drum hits only* ignores the grid entirely and cuts purely on transients — for
+live recordings, acoustic tracks and rubato playing.
+
+**Cut on** — which drum you follow, since "where are the hits" has a different
+answer per instrument:
+
+| | Frequency band | What it follows |
+| --- | --- | --- |
+| Hi-hats & rolls | 5–10.5 kHz | The fast stuff — rolls, fills, triplets |
+| Snares & claps | 200 Hz–2 kHz | The backbeat |
+| Kick & 808 | 30–250 Hz | The main pulse |
+| Whole kit | full range | Everything, weighted to the low end |
+
+For UK drill, **Hi-hats & rolls** is the setting you want. On a test pattern with
+1/32 hat rolls, the high band produced 74 cuts through the roll against 28 in the
+steady section, while the kick band stayed flat at 28 → 30 — the pulse doesn't
+move, the hats do.
+
+**Fastest cut** — the closest two cuts may land, 0.04 s to 0.6 s. This is the
+throttle on roll detection: a 1/32 roll at 140 BPM is one hit every 0.054 s, so
+anything above ~0.1 s here will quietly flatten the roll back to the grid. Turn it
+down for machine-gun cutting, up if the result is too frantic to watch.
+
+**Sensitivity** — how strong a transient has to be to count as a hit.
 
 **BPM** — auto-detected. If the edit feels twice as fast or twice as slow as the
 music, hit **÷2** or **×2**; picking the wrong octave is the most common beat
