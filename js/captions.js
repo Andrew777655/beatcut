@@ -289,8 +289,53 @@ function downmix(audioBuffer) {
  * Accuracy warning for callers: Whisper is trained on speech. Sung vocals over
  * a full mix transcribe poorly - treat the result as a draft to correct.
  */
+/**
+ * Group per-word timestamps into caption lines that follow the phrasing:
+ * a new line starts after `perLine` words, or wherever the singer pauses.
+ */
+export function groupWords(words, perLine, maxGap = 0.7) {
+  const lines = [];
+  let cur = [];
+
+  for (const w of words) {
+    const text = (w.text || '').trim();
+    const start = w.timestamp && w.timestamp[0];
+    const end = w.timestamp && w.timestamp[1];
+    if (!text || start == null || end == null) continue;
+
+    if (cur.length && (cur.length >= perLine || start - cur[cur.length - 1].end > maxGap)) {
+      lines.push(cur);
+      cur = [];
+    }
+    cur.push({ text, start, end });
+  }
+  if (cur.length) lines.push(cur);
+
+  const out = lines.map((ws, i) => ({
+    id: `w${Date.now()}_${i}`,
+    text: ws.map((w) => w.text).join(' '),
+    start: ws[0].start,
+    end: ws[ws.length - 1].end,
+  }));
+
+  // A line that vanishes the instant the last word ends flickers. Hold it a
+  // beat longer, but never past the next line or through a long instrumental.
+  for (let i = 0; i < out.length; i++) {
+    const limit = i + 1 < out.length ? out[i + 1].start : Infinity;
+    out[i].end = Math.min(limit, out[i].end + 1.2);
+  }
+  return out;
+}
+
 export async function transcribe(audioBuffer, opts, onStatus) {
-  const { modelKey = 'base', language = '', isolate = true } = opts || {};
+  const {
+    modelKey = 'base',
+    language = '',
+    isolate = false,
+    wordTiming = true,
+    wordsPerLine = 4,
+    processing = 'cpu',
+  } = opts || {};
   const model = MODELS[modelKey] || MODELS.base;
   onStatus({ phase: 'load', message: 'Loading transcription library…' });
 
@@ -306,8 +351,9 @@ export async function transcribe(audioBuffer, opts, onStatus) {
     );
   }
 
-  // WebGPU is dramatically faster and makes the bigger models usable at all.
-  const device = navigator.gpu ? 'webgpu' : 'wasm';
+  // WebGPU is far faster, but fp16 on some GPUs is less faithful than plain
+  // 8-bit on the CPU, so this is the user's call rather than an auto-upgrade.
+  const device = processing === 'gpu' && navigator.gpu ? 'webgpu' : 'wasm';
   const key = `${modelKey}|${device}`;
 
   if (!cachedPipeline || cachedKey !== key) {
@@ -350,35 +396,45 @@ export async function transcribe(audioBuffer, opts, onStatus) {
   onStatus({ phase: 'run', message: 'Listening to the vocal…' });
 
   const genOpts = {
-    return_timestamps: true,
+    return_timestamps: wordTiming ? 'word' : true,
     chunk_length_s: 30,
     stride_length_s: 5,
-    // Whisper feeds its own previous output back in as context. On music that
-    // turns one bad guess into an endless loop of the same phrase - the classic
-    // ">> >> >>" / "I'm not. I'm not." failure. Cutting the feedback stops it.
-    condition_on_prev_tokens: false,
-    condition_on_previous_text: false,
-    no_repeat_ngram_size: 3,
-    repetition_penalty: 1.15,
+    // Deliberately NOT setting no_repeat_ngram_size / repetition_penalty, and
+    // deliberately leaving previous-text conditioning at its default. Those
+    // suppress runaway loops but they also forbid a hook from repeating, which
+    // is what a chorus is - they cost more in lyric quality than they save.
+    // Loops are dealt with after the fact instead, in cleanChunks().
   };
   if (model.multilingual) {
     genOpts.task = 'transcribe';
     if (language) genOpts.language = language;
   }
 
-  const result = await cachedPipeline(audio, genOpts);
+  let result;
+  let usedWordTiming = wordTiming;
+  try {
+    result = await cachedPipeline(audio, genOpts);
+  } catch (err) {
+    // Word timestamps need cross-attention alignment heads; not every export
+    // has them. Fall back to segment timing rather than failing outright.
+    if (!wordTiming) throw err;
+    usedWordTiming = false;
+    result = await cachedPipeline(audio, { ...genOpts, return_timestamps: true });
+  }
 
   const chunks = (result && result.chunks) || [];
-  const raw = chunks
-    .map((c, i) => ({
-      id: `w${Date.now()}_${i}`,
-      text: (c.text || '').trim(),
-      start: c.timestamp && c.timestamp[0] != null ? c.timestamp[0] : 0,
-      end: c.timestamp && c.timestamp[1] != null ? c.timestamp[1] : 0,
-    }))
-    .filter((c) => c.end > c.start);
+  const raw = usedWordTiming
+    ? groupWords(chunks, wordsPerLine)
+    : chunks
+        .map((c, i) => ({
+          id: `w${Date.now()}_${i}`,
+          text: (c.text || '').trim(),
+          start: c.timestamp && c.timestamp[0] != null ? c.timestamp[0] : 0,
+          end: c.timestamp && c.timestamp[1] != null ? c.timestamp[1] : 0,
+        }))
+        .filter((c) => c.end > c.start);
 
-  return cleanChunks(raw);
+  return { ...cleanChunks(raw), wordTiming: usedWordTiming };
 }
 
 /** Normalised form used to spot a line the model is stuck repeating. */
@@ -397,6 +453,8 @@ export function cleanChunks(chunks) {
   const seen = new Map();
   const out = [];
   let dropped = 0;
+  let junkDropped = 0;   // markers and non-speech tags
+  let loopDropped = 0;   // the same line arriving back to back
 
   for (const c of chunks) {
     let text = c.text
@@ -406,25 +464,35 @@ export function cleanChunks(chunks) {
       .replace(/\s+/g, ' ')
       .trim();
 
-    if (!text || !/[a-z0-9]/i.test(text)) { dropped++; continue; }
+    if (!text || !/[a-z0-9]/i.test(text)) { dropped++; junkDropped++; continue; }
 
     const key = keyOf(text);
-    if (!key) { dropped++; continue; }
+    if (!key) { dropped++; junkDropped++; continue; }
 
-    // Same line back to back, or the model stuck on one phrase all track.
+    // Only BACK-TO-BACK repeats are collapsed. A runaway loop is consecutive by
+    // nature, while a chorus comes back later in the song - counting total
+    // occurrences would delete the hook, which is usually the line you most
+    // want on screen.
     const prev = out[out.length - 1];
     if (prev && keyOf(prev.text) === key) {
       prev.end = Math.max(prev.end, c.end); // absorb, don't repeat
       dropped++;
+      loopDropped++;
       continue;
     }
-    const count = (seen.get(key) || 0) + 1;
-    seen.set(key, count);
-    if (count > 3) { dropped++; continue; }
+    seen.set(key, (seen.get(key) || 0) + 1);
 
     out.push({ ...c, text });
   }
 
+  // A loop is repetition; an instrumental is tags and markers. Same empty
+  // result, different advice, so tell them apart.
   const total = chunks.length || 1;
-  return { captions: out, dropped, looped: dropped / total > 0.6 };
+  return {
+    captions: out,
+    dropped,
+    junkDropped,
+    loopDropped,
+    looped: dropped / total > 0.6 && loopDropped > junkDropped,
+  };
 }

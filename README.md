@@ -88,10 +88,28 @@ a first draft, not to produce a finished caption track. *Snap lines to the beat
 grid* pulls whatever it returns onto the nearest beat, which fixes the timing even
 when the words need work — and the timing is the part that normally takes longest.
 
+**Timing** decides where the lines land.
+
+*Per word* (the default) asks Whisper for a timestamp on every individual word
+and builds lines from those, breaking wherever the singer pauses. Lines then
+start exactly on the word being sung, which is what you want for lyrics — the
+captions follow the voice, not the cuts.
+
+*Per line* uses Whisper's own coarser segments. Fewer, longer lines; use it if
+per-word timing comes out jittery.
+
+**Words per line** (per-word mode only) sets how much text is on screen at once.
+3–4 reads best on a phone.
+
+**Snap lines to the beat grid** is off by default. Word timing is already tied to
+the vocal, and snapping it to the beat drags each line off the word it belongs
+to. Only turn it on if you want captions locked to the cuts instead of the voice.
+
 ### Getting better words out of it
 
-**Strip the backing track first** (on by default) is the biggest single lever, and
-it isn't a model at all. Lead vocals are almost always panned dead centre, so per
+**Strip the backing track first** is off by default. It is a large lever when it
+works, but on a sparse mix it can leave too little signal and Whisper hallucinates
+on near-silence — try it both ways. Lead vocals are almost always panned dead centre, so per
 frequency bin the left and right channels carry near-identical energy, while
 guitars, synths, pads and reverb are spread wider. Keeping only the bins where the
 channels agree, and band-limiting to 180 Hz–7 kHz to drop kick, bass and cymbals,
@@ -114,13 +132,21 @@ language detection, and a wrong guess wrecks the whole transcript.
 
 ### If it comes back as `>> >> >>` or one phrase on repeat
 
-That's Whisper's repetition-loop failure, and it means the model could not find
-speech but kept generating anyway. Whisper normally feeds its own previous output
-back in as context, which turns one bad guess into an endless echo, so that
-feedback is switched off here along with an n-gram repeat block. Anything that
-still slips through — `>>` speaker markers, `[Music]` and similar bracketed tags,
-a line repeating more than three times — is stripped before the captions are
-built, and the status line tells you how many junk lines were removed.
+That's Whisper's repetition-loop failure: the model could not find speech but kept
+generating anyway.
+
+It is handled **after** decoding, not during. The obvious in-decoder fixes — an
+n-gram repeat block and a repetition penalty — do stop loops, but they also forbid
+a phrase from repeating, and a repeating phrase is what a hook *is*. They cost
+more in lyric quality than they save, so they are deliberately not used.
+
+Instead the transcript is cleaned afterwards: `>>` speaker markers and bracketed
+tags like `[Music]` are stripped, and a line arriving **back to back** with itself
+is absorbed into the previous one. Only consecutive repeats collapse — a chorus
+returning later in the song is left alone, because counting total occurrences
+would delete the very line you most want on screen. The status line reports how
+many junk lines were removed, and distinguishes a genuine loop from a track that
+simply read as music.
 
 If a track comes back empty or heavily filtered, the audio genuinely had no
 intelligible vocal for the model. Worth trying in order: a bigger model, an
@@ -128,9 +154,11 @@ explicit Language, and toggling *Strip the backing track first* — isolation
 usually helps, but on a sparse mix it can leave too little signal, and Whisper
 hallucinates on near-silence rather than admitting it heard nothing.
 
-Precision is chosen automatically: `fp16` on WebGPU, 8-bit weights on CPU, since
-full precision on CPU is unusably slow. The 8-bit path does cost some accuracy —
-if your browser has WebGPU (Chrome and Edge do), you're already on the better one.
+**Processing** picks where it runs. *Compatible* (the default) is 8-bit weights on
+the CPU. *Fast* is `fp16` on the GPU via WebGPU — much quicker, and necessary for
+the large model, but fp16 on some GPUs is less faithful than plain 8-bit on the
+CPU. If words come out worse after switching, switch back; speed is not worth a
+wrong transcript.
 
 Instrumental tracks correctly come back with nothing.
 

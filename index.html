@@ -332,11 +332,35 @@
               <option value="ko">Korean</option>
             </select>
           </label>
-          <label class="checkline">
-            <input type="checkbox" id="capIsolate" checked /> Strip the backing track first
+          <label class="field">
+            Timing
+            <select id="capTiming">
+              <option value="word" selected>Per word — follows the vocal</option>
+              <option value="line">Per line — Whisper's own segments</option>
+            </select>
+          </label>
+          <label class="field" id="capWordsField">
+            Words per line
+            <select id="capWords">
+              <option value="3">3</option>
+              <option value="4" selected>4</option>
+              <option value="5">5</option>
+              <option value="6">6</option>
+              <option value="8">8</option>
+            </select>
+          </label>
+          <label class="field">
+            Processing
+            <select id="capProc">
+              <option value="cpu" selected>Compatible — CPU, 8-bit</option>
+              <option value="gpu">Fast — GPU, fp16 (needs WebGPU)</option>
+            </select>
           </label>
           <label class="checkline">
-            <input type="checkbox" id="capSnap" checked /> Snap lines to the beat grid
+            <input type="checkbox" id="capIsolate" /> Strip the backing track first
+          </label>
+          <label class="checkline">
+            <input type="checkbox" id="capSnap" /> Snap lines to the beat grid
           </label>
           <button id="capTranscribe" class="ghost wide">Transcribe</button>
           <div id="capStatus" class="hint"></div>

@@ -1390,17 +1390,22 @@ async function runTranscribe() {
         modelKey: $('capModel').value,
         language: $('capLang').value,
         isolate: $('capIsolate').checked,
+        wordTiming: $('capTiming').value === 'word',
+        wordsPerLine: Number($('capWords').value),
+        processing: $('capProc').value,
       },
       (s) => { status.textContent = s.message; }
     );
 
-    const { captions: cleaned, dropped, looped } = result;
+    const { captions: cleaned, dropped, looped, wordTiming } = result;
 
     if (!cleaned.length) {
-      status.textContent = looped || dropped
-        ? 'The model looped on this track instead of finding words. Try a bigger ' +
-          'model, or turn off "Strip the backing track first".'
-        : 'No speech found. Instrumental tracks give nothing back.';
+      const advice = $('capIsolate').checked
+        ? ' Try a bigger model, or turn off "Strip the backing track first".'
+        : ' Try a bigger model, or set the Language explicitly.';
+      status.textContent = looped
+        ? `The model looped instead of finding words.${advice}`
+        : `No clear vocal found — the track read as music.${advice}`;
       return;
     }
 
@@ -1414,7 +1419,7 @@ async function runTranscribe() {
     $('capText').value = state.captions.map((c) => c.text).join('\n');
     renderCaptionList();
     status.textContent =
-      `${state.captions.length} lines` +
+      `${state.captions.length} lines, timed ${wordTiming ? 'per word' : 'per segment'}` +
       (dropped ? `, ${dropped} junk lines removed` : '') +
       ' — expect mistakes on sung vocals; edit them below.';
     if (!state.playing) drawFrame(state.cursor);
@@ -1686,6 +1691,10 @@ $('capClear').addEventListener('click', () => {
   if (!state.playing) drawFrame(state.cursor);
 });
 $('capTranscribe').addEventListener('click', runTranscribe);
+
+$('capTiming').addEventListener('input', () => {
+  $('capWordsField').hidden = $('capTiming').value !== 'word';
+});
 
 for (const id of ['capOn', 'capSize', 'capPos', 'capOutline', 'capColor',
                   'capOutlineColor', 'capUpper', 'capPop', 'capBox']) {
