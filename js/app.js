@@ -20,6 +20,48 @@ const state = {
 
 let nextId = 1;
 
+// What happens DURING a slot.
+const EFFECTS = [
+  ['none', 'None'],
+  ['punch', 'Punch zoom'],
+  ['punchflash', 'Punch + flash'],
+  ['flash', 'Flash'],
+  ['shake', 'Shake'],
+  ['bounce', 'Bounce'],
+  ['drift', 'Slow drift in'],
+  ['driftout', 'Slow drift out'],
+  ['panleft', 'Pan left'],
+  ['panright', 'Pan right'],
+  ['pulse', 'Pulse'],
+  ['tilt', 'Tilt'],
+  ['blurin', 'Blur in'],
+  ['glitch', 'Glitch'],
+];
+
+// What happens BETWEEN two slots.
+const TRANSITIONS = [
+  ['cut', 'Hard cut'],
+  ['dissolve', 'Crossfade'],
+  ['fadeblack', 'Dip to black'],
+  ['fadewhite', 'Dip to white'],
+  ['slideleft', 'Slide left'],
+  ['slideright', 'Slide right'],
+  ['slideup', 'Slide up'],
+  ['whip', 'Whip pan'],
+  ['zoomblur', 'Zoom blur'],
+  ['wipe', 'Wipe'],
+  ['glitchcut', 'Glitch cut'],
+];
+
+const resolveEffect = (seg) => (seg.ov && seg.ov.effect) || $('effect').value;
+const resolveTransition = (seg) => (seg.ov && seg.ov.transition) || $('transition').value;
+
+function fillSelect(el, list, firstOption) {
+  el.innerHTML =
+    (firstOption ? `<option value="">${firstOption}</option>` : '') +
+    list.map(([v, label]) => `<option value="${v}">${label}</option>`).join('');
+}
+
 // Per-slot edits. `clipId: null` means "whatever the rotation would pick".
 const DEFAULT_OV = {
   clipId: null,
@@ -31,6 +73,8 @@ const DEFAULT_OV = {
   saturate: 100,
   hue: 0,
   mirror: false,
+  effect: '',      // '' = follow the global Look setting
+  transition: '',  // '' = follow the global Look setting
 };
 
 const ovFor = (i) => state.overrides[i] || (state.overrides[i] = { ...DEFAULT_OV });
@@ -100,7 +144,15 @@ async function loadImage(file) {
   const url = URL.createObjectURL(file);
   const el = new Image();
   el.src = url;
-  await el.decode().catch(() => {});
+
+  // `decode()` waits on rasterization and never settles while the tab isn't
+  // compositing, which would hang the whole import. `load` has no such tie.
+  await new Promise((res) => {
+    el.addEventListener('load', res, { once: true });
+    el.addEventListener('error', res, { once: true });
+    setTimeout(res, 10_000);
+  });
+
   if (!el.naturalWidth) {
     URL.revokeObjectURL(url);
     return null;
@@ -297,12 +349,135 @@ function segmentAt(t) {
 
 /* ================================================================ draw == */
 
-function drawCover(ctx, src, sw, sh, W, H, scale, dx, dy) {
+/** Cover-fit draw about the frame centre, with rotation and mirroring. */
+function drawCover(ctx, src, sw, sh, W, H, scale, dx, dy, rot, mirror) {
   if (!sw || !sh) return;
   const s = Math.max(W / sw, H / sh) * scale;
   const w = sw * s;
   const h = sh * s;
-  ctx.drawImage(src, (W - w) / 2 + dx, (H - h) / 2 + dy, w, h);
+  ctx.save();
+  ctx.translate(W / 2 + dx, H / 2 + dy);
+  if (rot) ctx.rotate(rot);
+  if (mirror) ctx.scale(-1, 1);
+  ctx.drawImage(src, -w / 2, -h / 2, w, h);
+  ctx.restore();
+}
+
+/**
+ * Geometry an effect contributes at time `t` within `seg`.
+ * Everything is relative: scale multiplies, dx/dy add, flash is an overlay.
+ */
+function effectParams(seg, t) {
+  const dt = Math.max(0, t - seg.start);
+  const len = Math.max(0.001, seg.end - seg.start);
+  const p = Math.min(1, dt / len); // 0..1 through the slot
+  const k = Number($('intensity').value) / 100;
+  const out = { scale: 1, dx: 0, dy: 0, rot: 0, blur: 0, flash: 0, glitch: 0 };
+
+  switch (resolveEffect(seg)) {
+    case 'punch':
+      out.scale = 1 + 0.14 * k * Math.exp(-dt / 0.11);
+      break;
+    case 'punchflash':
+      out.scale = 1 + 0.14 * k * Math.exp(-dt / 0.11);
+      out.flash = 0.5 * k * Math.exp(-dt / 0.07);
+      break;
+    case 'flash':
+      out.flash = 0.5 * k * Math.exp(-dt / 0.07);
+      break;
+    case 'shake':
+      out.dx = Math.sin(dt * 90) * 26 * k * Math.exp(-dt / 0.09);
+      out.dy = Math.cos(dt * 71) * 26 * k * Math.exp(-dt / 0.09);
+      out.scale = 1 + 0.04 * k; // hide the edges the shake exposes
+      break;
+    case 'drift':
+      out.scale = 1 + 0.06 * k * p;
+      break;
+    case 'driftout':
+      out.scale = 1 + 0.06 * k * (1 - p);
+      break;
+    case 'panleft':
+      out.scale = 1 + 0.08 * k;
+      out.dx = 0.05 * k * (0.5 - p) * 2 * -260;
+      break;
+    case 'panright':
+      out.scale = 1 + 0.08 * k;
+      out.dx = 0.05 * k * (0.5 - p) * 2 * 260;
+      break;
+    case 'bounce':
+      out.scale = 1 + 0.12 * k * Math.exp(-dt / 0.22) * Math.cos(dt * 26);
+      break;
+    case 'pulse':
+      out.scale = 1 + 0.05 * k * Math.sin(p * Math.PI);
+      break;
+    case 'tilt':
+      out.rot = 0.06 * k * Math.exp(-dt / 0.16);
+      out.scale = 1 + 0.09 * k; // rotation would otherwise show corners
+      break;
+    case 'blurin':
+      out.blur = 26 * k * Math.exp(-dt / 0.12);
+      out.scale = 1 + 0.05 * k * Math.exp(-dt / 0.12);
+      break;
+    case 'glitch':
+      out.glitch = k * Math.exp(-dt / 0.1);
+      out.scale = 1 + 0.03 * k;
+      break;
+    default:
+      break; // 'none'
+  }
+  return out;
+}
+
+/**
+ * Paint one slot. `over` lets a transition nudge the same slot without the
+ * effect layer knowing: {alpha, dx, dy, scaleMul, blur}.
+ */
+function renderSlot(seg, t, over, W, H) {
+  const clip = state.clips.find((c) => c.id === seg.clipId);
+  if (!clip) return null;
+
+  const ov = seg.ov || DEFAULT_OV;
+  const e = effectParams(seg, t);
+  const sw = clip.kind === 'video' ? clip.el.videoWidth || clip.w : clip.w;
+  const sh = clip.kind === 'video' ? clip.el.videoHeight || clip.h : clip.h;
+
+  const scale = ov.zoom * e.scale * (over.scaleMul || 1);
+  const dx = e.dx + (over.dx || 0);
+  const dy = e.dy + (over.dy || 0);
+  const blur = Math.max(e.blur, over.blur || 0);
+
+  const filters = [];
+  const grade = cssFilter(ov);
+  if (grade !== 'none') filters.push(grade);
+  if (blur > 0.3) filters.push(`blur(${blur.toFixed(1)}px)`);
+
+  try {
+    sctx.save();
+    if (over.alpha != null) sctx.globalAlpha = clamp(over.alpha, 0, 1);
+    sctx.filter = filters.length ? filters.join(' ') : 'none';
+    drawCover(sctx, clip.el, sw, sh, W, H, scale, dx, dy, e.rot, ov.mirror);
+
+    // Glitch: re-stamp a few horizontal slices, offset and channel-shifted.
+    if (e.glitch > 0.02) {
+      const slices = 5;
+      for (let i = 0; i < slices; i++) {
+        const y = (i / slices) * H + ((Math.sin(t * 37 + i) + 1) / 2) * (H / slices) * 0.4;
+        const h = (H / slices) * 0.35;
+        const off = Math.sin(t * 53 + i * 2.1) * 70 * e.glitch;
+        sctx.save();
+        sctx.beginPath();
+        sctx.rect(0, y, W, h);
+        sctx.clip();
+        sctx.globalCompositeOperation = 'screen';
+        drawCover(sctx, clip.el, sw, sh, W, H, scale, dx + off, dy, e.rot, ov.mirror);
+        sctx.restore();
+      }
+    }
+    sctx.restore();
+  } catch {
+    sctx.restore();
+  }
+  return e;
 }
 
 let lastSegment = null;
@@ -310,6 +485,8 @@ let lastSegment = null;
 function drawFrame(t) {
   const W = stage.width;
   const H = stage.height;
+  sctx.filter = 'none';
+  sctx.globalAlpha = 1;
   sctx.fillStyle = '#000';
   sctx.fillRect(0, 0, W, H);
 
@@ -323,56 +500,159 @@ function drawFrame(t) {
     lastSegment = seg;
   }
 
-  const dt = Math.max(0, t - seg.start);
-  const segLen = Math.max(0.001, seg.end - seg.start);
-  const k = Number($('intensity').value) / 100;
-  const ov = seg.ov || DEFAULT_OV;
+  const i = state.segments.indexOf(seg);
+  const prev = i > 0 ? state.segments[i - 1] : null;
+  const trans = resolveTransition(seg);
+  const td = Math.min(
+    Number($('transLen').value) / 1000,
+    (seg.end - seg.start) * 0.9
+  );
+  const dt = t - seg.start;
 
-  let scale = ov.zoom;
-  let dx = 0;
-  let dy = 0;
-
-  if ($('fxDrift').checked) scale *= 1 + 0.06 * k * (dt / segLen);
-  if ($('fxPunch').checked) scale *= 1 + 0.14 * k * Math.exp(-dt / 0.11);
-  if ($('fxShake').checked) {
-    const amp = 26 * k * Math.exp(-dt / 0.09);
-    dx += Math.sin(dt * 90) * amp;
-    dy += Math.cos(dt * 71) * amp;
+  let e;
+  if (prev && trans !== 'cut' && td > 0.01 && dt < td) {
+    e = drawTransition(trans, dt / td, prev, seg, t, W, H);
+  } else {
+    e = renderSlot(seg, t, {}, W, H);
   }
 
-  const src = clip.el;
-  const sw = clip.kind === 'video' ? clip.el.videoWidth || clip.w : clip.w;
-  const sh = clip.kind === 'video' ? clip.el.videoHeight || clip.h : clip.h;
+  sctx.filter = 'none';
+  sctx.globalAlpha = 1;
 
-  try {
-    sctx.save();
-    sctx.filter = cssFilter(ov);
-    if (ov.mirror) {
-      sctx.translate(W, 0);
-      sctx.scale(-1, 1);
-      dx = -dx;
-    }
-    drawCover(sctx, src, sw, sh, W, H, scale, dx, dy);
-    sctx.restore();
-  } catch {
-    sctx.restore();
-  }
-
-  if ($('fxFlash').checked) {
-    const a = 0.5 * k * Math.exp(-dt / 0.07);
-    if (a > 0.003) {
-      sctx.fillStyle = `rgba(255,255,255,${Math.min(a, 0.9)})`;
-      sctx.fillRect(0, 0, W, H);
-    }
+  if (e && e.flash > 0.003) {
+    sctx.fillStyle = `rgba(255,255,255,${Math.min(e.flash, 0.9)})`;
+    sctx.fillRect(0, 0, W, H);
   }
 
   // Keep short videos looping inside a long segment, back to their in-point.
+  const ov = seg.ov || DEFAULT_OV;
   if (clip.kind === 'video' && state.playing && clip.el.duration) {
     if (clip.el.currentTime >= clip.el.duration - 0.06) {
       clip.el.currentTime = Math.min(ov.inPoint, Math.max(0, clip.el.duration - 0.05));
       clip.el.play().catch(() => {});
     }
   }
+}
+
+/**
+ * Composite the outgoing and incoming slots. `p` runs 0..1.
+ * The outgoing slot is sampled at its final instant - its video element is
+ * already paused, so it holds that frame.
+ */
+function clipped(x, y, w, h, fn) {
+  sctx.save();
+  sctx.beginPath();
+  sctx.rect(x, y, w, h);
+  sctx.clip();
+  const r = fn();
+  sctx.restore();
+  return r;
+}
+
+/**
+ * Push one slot off while the next pushes in.
+ * axis 'x' or 'y'; dir 0 = new content enters from the far edge, 1 = from the near edge.
+ */
+function slide(prev, seg, pt, t, ease, W, H, axis, dir, blur = 0) {
+  const span = axis === 'x' ? W : H;
+  const shown = span * ease; // how much of the incoming slot is visible
+  const outOff = (dir ? 1 : -1) * ease * span;
+  const inOff = dir ? -(span - shown) : span - shown;
+  const key = axis === 'x' ? 'dx' : 'dy';
+
+  const outRect = dir ? [shown, 0, W - shown, H] : [0, 0, W - shown, H];
+  const inRect = dir ? [0, 0, shown, H] : [W - shown, 0, shown, H];
+  const vOutRect = dir ? [0, shown, W, H - shown] : [0, 0, W, H - shown];
+  const vInRect = dir ? [0, 0, W, shown] : [0, H - shown, W, shown];
+
+  const [ox, oy, ow, oh] = axis === 'x' ? outRect : vOutRect;
+  const [ix, iy, iw, ih] = axis === 'x' ? inRect : vInRect;
+
+  clipped(ox, oy, ow, oh, () => renderSlot(prev, pt, { [key]: outOff, blur }, W, H));
+  return clipped(ix, iy, iw, ih, () => renderSlot(seg, t, { [key]: inOff, blur }, W, H));
+}
+
+function drawTransition(kind, p, prev, seg, t, W, H) {
+  const pt = prev.end - 0.001;
+  const ease = p * p * (3 - 2 * p); // smoothstep
+  let e = null;
+
+  switch (kind) {
+    case 'dissolve':
+      renderSlot(prev, pt, {}, W, H);
+      e = renderSlot(seg, t, { alpha: ease }, W, H);
+      break;
+
+    case 'fadeblack':
+      if (p < 0.5) renderSlot(prev, pt, { alpha: 1 - p * 2 }, W, H);
+      else e = renderSlot(seg, t, { alpha: (p - 0.5) * 2 }, W, H);
+      break;
+
+    case 'fadewhite':
+      if (p < 0.5) renderSlot(prev, pt, {}, W, H);
+      else e = renderSlot(seg, t, {}, W, H);
+      sctx.filter = 'none';
+      sctx.globalAlpha = 1;
+      sctx.fillStyle = `rgba(255,255,255,${1 - Math.abs(0.5 - p) * 2})`;
+      sctx.fillRect(0, 0, W, H);
+      break;
+
+    // Sliding layers must be clipped to the strip they occupy. Clips are
+    // cover-fit and usually overflow the frame, so an unclipped incoming layer
+    // just covers everything and the slide reads as a plain cut.
+    case 'slideleft':
+      e = slide(prev, seg, pt, t, ease, W, H, 'x', 0);
+      break;
+
+    case 'slideright':
+      e = slide(prev, seg, pt, t, ease, W, H, 'x', 1);
+      break;
+
+    case 'slideup':
+      e = slide(prev, seg, pt, t, ease, W, H, 'y', 0);
+      break;
+
+    case 'whip':
+      // Motion blur peaks mid-swipe, like a fast camera pan.
+      e = slide(prev, seg, pt, t, ease, W, H, 'x', 0, (1 - Math.abs(0.5 - p) * 2) * 45);
+      break;
+
+    case 'zoomblur':
+      renderSlot(prev, pt, { scaleMul: 1 + ease * 0.7, alpha: 1 - ease, blur: ease * 22 }, W, H);
+      e = renderSlot(seg, t, { scaleMul: 1.5 - 0.5 * ease, alpha: ease, blur: (1 - ease) * 14 }, W, H);
+      break;
+
+    case 'wipe':
+      renderSlot(prev, pt, {}, W, H);
+      sctx.save();
+      sctx.beginPath();
+      sctx.rect(0, 0, W * ease, H);
+      sctx.clip();
+      e = renderSlot(seg, t, {}, W, H);
+      sctx.restore();
+      break;
+
+    case 'glitchcut': {
+      e = renderSlot(seg, t, {}, W, H);
+      const strength = 1 - p;
+      for (let i = 0; i < 6; i++) {
+        const y = ((i + Math.sin(t * 40 + i)) / 6) * H;
+        const h = (H / 6) * 0.5;
+        sctx.save();
+        sctx.beginPath();
+        sctx.rect(0, y, W, h);
+        sctx.clip();
+        sctx.globalAlpha = strength;
+        renderSlot(prev, pt, { dx: Math.sin(t * 61 + i) * 90 * strength }, W, H);
+        sctx.restore();
+      }
+      break;
+    }
+
+    default:
+      e = renderSlot(seg, t, {}, W, H);
+  }
+  return e;
 }
 
 function cssFilter(ov) {
@@ -828,6 +1108,8 @@ function syncInspector() {
     $('inspTrim').value = Math.min(ov.inPoint, clip.duration);
   }
 
+  $('inspEffect').value = ov.effect;
+  $('inspTransition').value = ov.transition;
   $('inspVol').value = Math.round(ov.volume * 100);
   $('inspZoom').value = Math.round(ov.zoom * 100);
   $('inspBright').value = ov.brightness;
@@ -864,6 +1146,8 @@ function applyInspector() {
   ov.saturate = Number($('inspSat').value);
   ov.hue = Number($('inspHue').value);
   ov.mirror = $('inspMirror').checked;
+  ov.effect = $('inspEffect').value;
+  ov.transition = $('inspTransition').value;
 
   syncInspectorLabels();
 
@@ -971,6 +1255,7 @@ function syncLabels() {
   $('senseVal').textContent = Number($('sense').value).toFixed(2);
   $('offsetVal').textContent = `${$('offset').value} ms`;
   $('intensityVal').textContent = `${$('intensity').value}%`;
+  $('transLenVal').textContent = `${$('transLen').value} ms`;
 }
 
 function setAspect() {
@@ -1031,12 +1316,25 @@ for (const id of ['beatsPerCut', 'mode', 'bpm', 'sense', 'offset', 'maxClips']) 
   });
 }
 
-for (const id of ['fxPunch', 'fxFlash', 'fxShake', 'fxDrift', 'intensity']) {
+for (const id of ['effect', 'transition', 'transLen', 'intensity']) {
   $(id).addEventListener('input', () => {
     syncLabels();
     if (!state.playing) drawFrame(state.cursor);
   });
 }
+
+$('btnRandomLook').addEventListener('click', () => {
+  // Skip 'none' so every slot actually gets something.
+  const pool = EFFECTS.filter(([id]) => id !== 'none').map(([id]) => id);
+  for (let i = 0; i < state.segments.length; i++) {
+    const ov = ovFor(i);
+    ov.effect = pool[Math.floor(Math.random() * pool.length)];
+    state.segments[i].ov = ov;
+  }
+  renderTimeline();
+  syncInspector();
+  if (!state.playing) drawFrame(state.cursor);
+});
 
 const setBpm = (v) => {
   $('bpm').value = clamp(v, 40, 300).toFixed(2);
@@ -1048,8 +1346,9 @@ $('bpmReset').addEventListener('click', () => {
   if (state.analysis) setBpm(state.analysis.bpm);
 });
 
-for (const id of ['inspClip', 'inspVol', 'inspTrim', 'inspZoom', 'inspBright',
-                  'inspContrast', 'inspSat', 'inspHue', 'inspMirror']) {
+for (const id of ['inspClip', 'inspEffect', 'inspTransition', 'inspVol', 'inspTrim',
+                  'inspZoom', 'inspBright', 'inspContrast', 'inspSat', 'inspHue',
+                  'inspMirror']) {
   $(id).addEventListener('input', applyInspector);
 }
 
@@ -1080,6 +1379,9 @@ $('inspApplyAll').addEventListener('click', () => {
     ov.saturate = src.saturate;
     ov.hue = src.hue;
     ov.mirror = src.mirror;
+    ov.effect = src.effect;
+    ov.transition = src.transition;
+    state.segments[i].ov = ov;
   }
   rebuild();
 });
@@ -1154,7 +1456,17 @@ window.addEventListener('resize', () => {
 });
 
 // Handy from the devtools console when something looks off.
-window.beatcut = { state, audioCtx, play, pause, rebuild, startExport, selectSlot };
+window.beatcut = {
+  state, audioCtx, play, pause, rebuild, startExport, selectSlot, drawFrame,
+  EFFECTS, TRANSITIONS,
+};
+
+fillSelect($('effect'), EFFECTS);
+fillSelect($('transition'), TRANSITIONS);
+fillSelect($('inspEffect'), EFFECTS, 'Use global');
+fillSelect($('inspTransition'), TRANSITIONS, 'Use global');
+$('effect').value = 'punch';
+$('transition').value = 'cut';
 
 setAspect();
 syncLabels();

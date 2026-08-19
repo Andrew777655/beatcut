@@ -82,6 +82,16 @@
             <select id="inspClip"></select>
           </label>
 
+          <label class="field">
+            Effect
+            <select id="inspEffect"></select>
+          </label>
+
+          <label class="field">
+            Transition in
+            <select id="inspTransition"></select>
+          </label>
+
           <label class="field" id="inspVolField">
             Clip volume <span class="val" id="inspVolVal">100%</span>
             <input type="range" id="inspVol" min="0" max="200" step="5" value="100" />
@@ -188,17 +198,27 @@
           </select>
         </label>
 
-        <div class="checks">
-          <label><input type="checkbox" id="fxPunch" checked /> Punch zoom on cut</label>
-          <label><input type="checkbox" id="fxFlash" /> Flash on cut</label>
-          <label><input type="checkbox" id="fxShake" /> Shake on cut</label>
-          <label><input type="checkbox" id="fxDrift" checked /> Slow drift (Ken Burns)</label>
-        </div>
+        <label class="field">
+          Effect on each clip
+          <select id="effect"></select>
+        </label>
+
+        <label class="field">
+          Transition between clips
+          <select id="transition"></select>
+        </label>
+
+        <label class="field">
+          Transition length <span class="val" id="transLenVal">180 ms</span>
+          <input type="range" id="transLen" min="0" max="600" step="10" value="180" />
+        </label>
 
         <label class="field">
           Intensity <span class="val" id="intensityVal">100%</span>
           <input type="range" id="intensity" min="0" max="200" step="5" value="100" />
         </label>
+
+        <button id="btnRandomLook" class="ghost wide">Randomise per-clip effects</button>
 
         <label class="field">
           Clip audio

@@ -66,6 +66,10 @@ setting has to be above zero for any of it to be audible.
 second, or to show a different moment of the same video in each slot it appears
 in. If the slot outlasts the clip, playback loops back to this point, not to zero.
 
+**Effect** and **Transition in** — override the global dropdowns for this slot
+only. *Use global* follows the Look section. This is how you give one clip a
+glitch while everything else punches, or put a whip pan on a single cut.
+
 **Zoom, Brightness, Contrast, Saturation, Hue, Mirror** — per-slot look. These
 composite at render time, so they land in the export exactly as previewed.
 
@@ -100,9 +104,25 @@ better than slightly after.
 
 **Stop after** — cap the edit at 8/16/24/32 clips instead of running the whole song.
 
-**Look** — 9:16 for TikTok/Reels/Shorts. Punch zoom on cut is the effect that
-makes it feel edited; flash and shake are strong, so drop the **Intensity**
-slider if you turn them on. Slow drift is a gentle Ken Burns push over each clip.
+**Look** — 9:16 for TikTok/Reels/Shorts.
+
+*Effect on each clip* (14 options) is what happens **during** a slot: punch zoom,
+punch + flash, flash, shake, bounce, slow drift in/out, pan left/right, pulse,
+tilt, blur in, glitch. Punch zoom is the one that makes an edit feel edited;
+flash, shake and glitch are strong, so pull **Intensity** down when using them.
+
+*Transition between clips* (11 options) is what happens **at** a cut: hard cut,
+crossfade, dip to black, dip to white, slide left/right/up, whip pan, zoom blur,
+wipe, glitch cut. Hard cut is the classic beat-sync look — transitions soften the
+hit, so keep **Transition length** short (120–200 ms) if you still want the cut
+to land on the beat. It's capped at 90% of a slot's length so a fast edit can
+never turn into a permanent dissolve.
+
+*Randomise per-clip effects* assigns a different effect to every slot at once —
+the fastest way to get a chaotic edit, then fix up the slots you don't like.
+
+Every effect and transition can be overridden per slot in the inspector, where
+*Use global* means "follow the dropdowns above".
 
 **Clip audio** — video clips are muted by default so you only hear the song. Set
 it to "quiet under music" if you want the original audio bleeding through.
