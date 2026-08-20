@@ -272,6 +272,22 @@ Slot edits are keyed by position, so changing BPM or the cut rate afterwards
 reshuffles which clip lands where while the edits stay with the slot number.
 Do your global timing first, then polish individual slots.
 
+## Finding the controls
+
+The right panel is split into four tabs, each holding a few grouped cards:
+
+| Tab | Groups | What lives there |
+| --- | --- | --- |
+| **Cut** | Rhythm · Tempo · Length & section | Where the cuts land, BPM, and which part of the song you're using |
+| **Look** | Frame · Motion · Guides · Audio | Aspect, default effect and transition, safe zones, clip audio |
+| **Text** | Lines · Auto-transcribe · Timed lines · Type · Reveal · Size & colour | Everything to do with captions |
+| **Slot** | — | The selected clip on its own. Enabled only when a timeline block is selected |
+
+Clicking a block in the timeline opens the **Slot** tab automatically; closing the
+inspector returns you to **Cut**. Changing a setting in any other tab never moves
+you, so you can edit a slot and keep adjusting the cut settings without the panel
+jumping around.
+
 ## The controls that matter
 
 **Cut every** — 1 beat is the classic fast TikTok edit. 2 beats is calmer,

@@ -74,7 +74,20 @@
       </section>
 
       <!-- --------------------------------------------------- settings --- -->
-      <aside class="panel">
+      <aside class="panel side">
+        <nav class="tabs" id="tabs">
+          <button type="button" class="tab is-on" data-pane="cut">Cut</button>
+          <button type="button" class="tab" data-pane="look">Look</button>
+          <button type="button" class="tab" data-pane="text">Text</button>
+          <button type="button" class="tab" id="tabSlot" data-pane="slot" disabled>Slot</button>
+        </nav>
+
+        <div class="panes">
+
+        <div class="pane" data-pane="slot">
+        <p class="empty" id="slotEmpty">
+          Click a block in the timeline to edit that clip on its own.
+        </p>
         <section id="inspector" hidden>
           <h2 class="insp-head">
             <span id="inspTitle">Slot</span>
@@ -140,8 +153,12 @@
           </div>
           <hr class="sep" />
         </section>
+        </div>
 
-        <h2>3 · Cutting</h2>
+        <div class="pane is-on" data-pane="cut">
+
+        <section class="grp">
+        <h3>Rhythm</h3>
 
         <label class="field">
           Cut every
@@ -181,6 +198,11 @@
           <input type="range" id="minGap" min="0.04" max="0.6" step="0.01" value="0.12" />
         </label>
 
+        </section>
+
+        <section class="grp">
+        <h3>Tempo</h3>
+
         <div class="field" id="bpmField">
           BPM
           <div class="bpmrow">
@@ -200,6 +222,11 @@
           Nudge beats <span class="val" id="offsetVal">0 ms</span>
           <input type="range" id="offset" min="-500" max="500" step="5" value="0" />
         </label>
+
+        </section>
+
+        <section class="grp">
+        <h3>Length &amp; section</h3>
 
         <label class="field">
           Edit length
@@ -235,7 +262,14 @@
           </select>
         </label>
 
-        <h2>4 · Look</h2>
+        </section>
+        </div>
+
+        <div class="pane" data-pane="look">
+
+        <section class="grp">
+        <h3>Frame</h3>
+
         <label class="field">
           Format
           <select id="aspect">
@@ -244,6 +278,11 @@
             <option value="1920x1080">16:9 wide (1920×1080)</option>
           </select>
         </label>
+
+        </section>
+
+        <section class="grp">
+        <h3>Motion</h3>
 
         <label class="field">
           Default effect · <span class="scope">all clips</span>
@@ -257,7 +296,7 @@
 
         <p class="hint">
           These set every clip at once. To change one clip on its own, click its
-          block in the timeline and use the inspector at the top of this panel.
+          block in the timeline — it opens in the <b>Slot</b> tab.
         </p>
 
         <label class="field">
@@ -271,6 +310,11 @@
         </label>
 
         <button id="btnRandomLook" class="ghost wide">Randomise per-clip effects</button>
+
+        </section>
+
+        <section class="grp">
+        <h3>Guides</h3>
 
         <label class="field">
           Safe zones <span class="scope">preview only</span>
@@ -287,6 +331,11 @@
           video. Guides are never exported.
         </p>
 
+        </section>
+
+        <section class="grp">
+        <h3>Audio</h3>
+
         <label class="field">
           Clip audio
           <select id="clipAudio">
@@ -295,7 +344,13 @@
           </select>
         </label>
 
-        <h2>5 · Captions</h2>
+        </section>
+        </div>
+
+        <div class="pane" data-pane="text">
+
+        <section class="grp">
+        <h3>Lines</h3>
 
         <label class="checkline">
           <input type="checkbox" id="capOn" checked /> Show captions
@@ -319,7 +374,9 @@
           <button id="capClear" class="ghost">Clear</button>
         </div>
 
-        <details class="auto">
+        </section>
+
+        <details class="grp auto">
           <summary>Auto-transcribe from the song</summary>
           <p class="hint">
             Runs a speech model in this tab — your audio never leaves the machine,
@@ -393,9 +450,13 @@
           <div id="capStatus" class="hint"></div>
         </details>
 
+        <section class="grp">
+        <h3>Timed lines</h3>
         <ul id="capList" class="caplist"></ul>
+        </section>
 
-        <h2>6 · Caption style</h2>
+        <section class="grp">
+        <h3>Type</h3>
 
         <label class="field">
           Font pairing
@@ -406,6 +467,11 @@
         <label class="checkline">
           <input type="checkbox" id="capSwap" /> Swap main / accent
         </label>
+
+        </section>
+
+        <section class="grp">
+        <h3>Reveal</h3>
 
         <label class="field">
           Word reveal
@@ -433,6 +499,11 @@
           The accent face lands on that share of the longer words. Wrap a word in
           *asterisks* in the box above to force it.
         </p>
+
+        </section>
+
+        <section class="grp">
+        <h3>Size &amp; colour</h3>
 
         <label class="field">
           Size <span class="val" id="capSizeVal">6.5%</span>
@@ -465,6 +536,10 @@
         <label class="checkline"><input type="checkbox" id="capUpper" checked /> UPPERCASE</label>
         <label class="checkline"><input type="checkbox" id="capPop" checked /> Pop in on the beat</label>
         <label class="checkline"><input type="checkbox" id="capBox" /> Dark background box</label>
+        </section>
+
+        </div>
+        </div>
       </aside>
     </main>
 

@@ -1426,6 +1426,7 @@ function selectSlot(i, seek) {
     el.classList && el.classList.toggle('selected', idx === i)
   );
   syncInspector();
+  showPane('slot');
 }
 
 /* =========================================================== inspector == */
@@ -1433,8 +1434,17 @@ function selectSlot(i, seek) {
 function syncInspector() {
   const i = state.selected;
   const seg = i != null ? state.segments[i] : null;
+
   $('inspector').hidden = !seg;
-  if (!seg) return;
+  $('slotEmpty').hidden = !!seg;
+  $('tabSlot').disabled = !seg;
+
+  // Pane switching belongs to selectSlot, not here: syncInspector also runs on
+  // every rebuild, and changing a Cut setting must not throw you into Slot.
+  if (!seg) {
+    if ($('tabSlot').classList.contains('is-on')) showPane('cut');
+    return;
+  }
 
   const ov = state.overrides[i] || DEFAULT_OV;
   const clip = state.clips.find((c) => c.id === seg.clipId);
@@ -1932,8 +1942,8 @@ for (const id of ['inspClip', 'inspEffect', 'inspTransition', 'inspVol', 'inspTr
 
 $('inspClose').addEventListener('click', () => {
   state.selected = null;
-  syncInspector();
   [...$('timeline').children].forEach((el) => el.classList && el.classList.remove('selected'));
+  syncInspector(); // disables the tab and drops back to Cut
 });
 
 $('inspReset').addEventListener('click', () => {
@@ -1975,6 +1985,24 @@ $('capTranscribe').addEventListener('click', runTranscribe);
 
 $('capTiming').addEventListener('input', () => {
   $('capWordsField').hidden = $('capTiming').value !== 'word';
+});
+
+/* ---------------------------------------------------------- tabs ------- */
+
+function showPane(name) {
+  for (const btn of $('tabs').children) {
+    btn.classList.toggle('is-on', btn.dataset.pane === name);
+  }
+  for (const pane of document.querySelectorAll('.pane')) {
+    pane.classList.toggle('is-on', pane.dataset.pane === name);
+  }
+  // Each tab keeps its own scroll position rather than inheriting the last.
+  document.querySelector('.panes').scrollTop = 0;
+}
+
+$('tabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.tab');
+  if (btn && !btn.disabled) showPane(btn.dataset.pane);
 });
 
 $('capFont').addEventListener('change', applyPairing);
