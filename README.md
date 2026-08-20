@@ -291,6 +291,19 @@ bar, then bursts into fast cuts through a roll. Grid cuts are never dropped.
 *Drum hits only* ignores the grid entirely and cuts purely on transients — for
 live recordings, acoustic tracks and rubato playing.
 
+*On the words* cuts the moment each caption word is sung, so the picture changes
+in time with the vocal rather than the beat. Needs captions first — add them in
+section 5 or run auto-transcribe, and the panel says how many words it found.
+It's at its sharpest with per-word transcription timing; typed captions have
+their words spread evenly across each line, so the cuts are even rather than
+tied to the voice.
+
+*Tempo grid + the words* keeps the grid and adds a cut on each word, the same
+way the drum mode does — steady underneath, reacting to the vocal on top.
+
+**Fastest cut** applies to the word modes too: fast rap can put words closer
+together than you'd want a cut, and this is the floor.
+
 **Cut on** — which drum you follow, since "where are the hits" has a different
 answer per instrument:
 

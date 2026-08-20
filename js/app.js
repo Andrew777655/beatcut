@@ -1,5 +1,7 @@
 import { analyze, buildGrid, pickOnsets } from './analysis.js';
-import { drawCaptions, captionAt, distribute, snapToBeat, transcribe } from './captions.js';
+import {
+  drawCaptions, captionAt, distribute, snapToBeat, transcribe, wordsOf,
+} from './captions.js';
 import { PAIRINGS, pairingById, loadPairing, fontString } from './fonts.js';
 
 /* ================================================================ state == */
@@ -361,15 +363,60 @@ function mergeCuts(grid, extra, minGap) {
   return g.concat(accepted).sort((a, b) => a - b);
 }
 
+/** The moment each caption word is sung - a cut per word. */
+function wordCutTimes() {
+  const out = [];
+  const minGap = Number($('minGap').value);
+  let last = -Infinity;
+  for (const cap of state.captions) {
+    for (const w of wordsOf(cap)) {
+      if (w.start - last < minGap) continue;
+      out.push(w.start);
+      last = w.start;
+    }
+  }
+  return out.sort((a, b) => a - b);
+}
+
+/** Show only the controls the chosen beat source actually uses. */
+function syncModeFields() {
+  const mode = $('mode').value;
+  const usesDrums = mode === 'onsets' || mode === 'hybrid';
+  const usesWords = mode === 'words' || mode === 'gridwords';
+
+  $('senseField').hidden = !usesDrums;
+  $('drumBandField').hidden = !usesDrums;
+  $('minGapField').hidden = !(usesDrums || usesWords);
+  $('bpmField').hidden = mode === 'onsets' || mode === 'words';
+
+  const note = $('wordCutNote');
+  if (usesWords && !state.captions.length) {
+    note.hidden = false;
+    note.textContent =
+      'No captions yet — add some in section 5 or run auto-transcribe, ' +
+      'otherwise there are no word times to cut on.';
+  } else if (usesWords) {
+    note.hidden = false;
+    const words = state.captions.reduce((n, c) => n + wordsOf(c).length, 0);
+    note.textContent = `Cutting on ${words} words from ${state.captions.length} caption lines.`;
+  } else {
+    note.hidden = true;
+  }
+}
+
 function cutTimes() {
   const a = state.analysis;
   if (!a) return [];
   const mode = $('mode').value;
+  const minGap = Number($('minGap').value);
+
   if (mode === 'onsets') return drumHits();
+  if (mode === 'words') return wordCutTimes();
 
   const cuts = gridCuts(beatTimes(), Number($('beatsPerCut').value));
-  if (mode !== 'hybrid') return cuts;
-  return mergeCuts(cuts, drumHits(), Number($('minGap').value));
+  if (mode === 'hybrid') return mergeCuts(cuts, drumHits(), minGap);
+  if (mode === 'gridwords') return mergeCuts(cuts, wordCutTimes(), minGap);
+  return cuts;
 }
 
 function rebuild() {
@@ -1347,8 +1394,22 @@ function placeCaptions() {
     Number($('capBeats').value),
     state.tEnd || (state.audio ? state.audio.buffer.duration : 0)
   );
+  captionsChanged();
+}
+
+/**
+ * Call after anything edits state.captions. In the word-driven cut modes the
+ * captions ARE the cut list, so the timeline has to be rebuilt with them.
+ */
+function captionsChanged() {
   renderCaptionList();
-  if (!state.playing) drawFrame(state.cursor);
+  const mode = $('mode').value;
+  if (mode === 'words' || mode === 'gridwords') {
+    syncModeFields();
+    rebuild();
+  } else if (!state.playing) {
+    drawFrame(state.cursor);
+  }
 }
 
 function renderCaptionList() {
@@ -1374,7 +1435,11 @@ function renderCaptionList() {
     input.value = cap.text;
     input.addEventListener('input', () => {
       state.captions[i].text = input.value;
-      if (!state.playing) drawFrame(state.cursor);
+      // Rebuilding the whole list on each keystroke would steal focus, so only
+      // the timeline is refreshed when the words drive the cuts.
+      const mode = $('mode').value;
+      if (mode === 'words' || mode === 'gridwords') rebuild();
+      else if (!state.playing) drawFrame(state.cursor);
     });
 
     const del = document.createElement('button');
@@ -1383,8 +1448,7 @@ function renderCaptionList() {
     del.title = 'Remove';
     del.addEventListener('click', () => {
       state.captions.splice(i, 1);
-      renderCaptionList();
-      if (!state.playing) drawFrame(state.cursor);
+      captionsChanged();
     });
 
     li.append(at, input, del);
@@ -1448,7 +1512,7 @@ async function runTranscribe() {
     })).filter((c) => c.end > c.start);
 
     $('capText').value = state.captions.map((c) => c.text).join('\n');
-    renderCaptionList();
+    captionsChanged();
     status.textContent =
       `${state.captions.length} lines from ${Math.round(analysedSeconds)}s of audio, ` +
       `timed ${wordTiming ? 'per word' : 'per segment'}` +
@@ -1631,14 +1695,7 @@ $('trimReset').addEventListener('click', () => {
 for (const id of ['beatsPerCut', 'mode', 'bpm', 'sense', 'offset', 'maxClips',
                   'editLength', 'drumBand', 'minGap']) {
   $(id).addEventListener('input', () => {
-    if (id === 'mode') {
-      const mode = $('mode').value;
-      const usesDrums = mode === 'onsets' || mode === 'hybrid';
-      $('senseField').hidden = !usesDrums;
-      $('drumBandField').hidden = !usesDrums;
-      $('minGapField').hidden = !usesDrums;
-      $('bpmField').hidden = mode === 'onsets';
-    }
+    if (id === 'mode') syncModeFields();
     syncLabels();
     rebuild();
   });
@@ -1720,8 +1777,7 @@ $('capClear').addEventListener('click', () => {
   state.captions = [];
   $('capText').value = '';
   $('capStatus').textContent = '';
-  renderCaptionList();
-  if (!state.playing) drawFrame(state.cursor);
+  captionsChanged();
 });
 $('capTranscribe').addEventListener('click', runTranscribe);
 
@@ -1836,6 +1892,7 @@ $('effect').value = 'punch';
 $('transition').value = 'cut';
 
 setAspect();
+syncModeFields();
 syncLabels();
 updateUi();
 drawWave();
