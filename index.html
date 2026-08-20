@@ -344,6 +344,8 @@
           <label class="field" id="capWordsField">
             Words per line
             <select id="capWords">
+              <option value="1">1 — every word timed on its own</option>
+              <option value="2">2</option>
               <option value="3">3</option>
               <option value="4" selected>4</option>
               <option value="5">5</option>
@@ -423,8 +425,11 @@
           </select>
         </label>
 
-        <label class="field">
-          Outline <span class="val" id="capOutlineVal">14%</span>
+        <label class="checkline">
+          <input type="checkbox" id="capOutlineOn" checked /> Outline around text
+        </label>
+        <label class="field" id="capOutlineField">
+          Outline weight <span class="val" id="capOutlineVal">14%</span>
           <input type="range" id="capOutline" min="0" max="40" step="1" value="14" />
         </label>
 

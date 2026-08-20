@@ -70,9 +70,10 @@ is parked somewhere, placement starts from the nearest beat to it, so you can
 drop a chorus in partway through. Each line then shows up in the list below with
 its timecode — click the time to jump there, edit the text inline, ✕ to remove.
 
-**Caption style** covers size, lower/centre/upper third, outline weight, colours,
-uppercase, a dark backing box, and a pop-in on the beat. The default is the usual
-look: heavy white text, thick black outline, lower third.
+**Caption style** covers size, lower/centre/upper third, colours, uppercase, a dark
+backing box, and a pop-in on the beat. The default is the usual look: heavy white
+text, thick black outline, lower third. **Outline around text** turns the stroke
+off entirely for clean flat type; the weight slider appears only while it's on.
 
 ### Fonts
 
@@ -116,6 +117,12 @@ so nothing jumps around while it fills.
 The last two need per-word timing to look right, which is what auto-transcribe's
 *Per word* mode produces. Typed captions get word times spread evenly across the
 line instead — still fine, just not locked to the vocal.
+
+For the tightest possible sync set **Words per line** to **1**: each word becomes
+its own caption, timed individually. Word timings survive editing the text — the
+displayed words are matched back to the timed ones by their spelling rather than
+their position, so correcting a mistake doesn't throw away the timing for the
+rest of the line.
 
 ### Accent words
 

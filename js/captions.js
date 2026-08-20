@@ -62,22 +62,76 @@ const STOPWORDS = new Set(
  * since been edited the counts stop matching, so times are re-spread evenly -
  * better than showing stale timings against the wrong words.
  */
+const bare = (s) => s.toLowerCase().replace(/[^a-z0-9']/g, '');
+
+/**
+ * Line up the displayed words with the timed ones by text, not by index.
+ * Editing a line, or junk stripped out of it, changes the count - matching on
+ * position alone would throw away every real timestamp on the line. Words with
+ * no match are interpolated between their timed neighbours.
+ */
+function alignTimes(parts, src, cap) {
+  const times = new Array(parts.length).fill(null);
+  let j = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const key = bare(parts[i]);
+    if (!key) continue;
+    for (let k = j; k < Math.min(src.length, j + 5); k++) {
+      if (bare(src[k].text || '') === key) {
+        times[i] = { start: src[k].start, end: src[k].end };
+        j = k + 1;
+        break;
+      }
+    }
+  }
+
+  // Fill gaps by spreading between the nearest known times on each side.
+  const span = Math.max(0.001, cap.end - cap.start);
+  for (let i = 0; i < times.length; i++) {
+    if (times[i]) continue;
+    let prev = i - 1;
+    while (prev >= 0 && !times[prev]) prev--;
+    let next = i + 1;
+    while (next < times.length && !times[next]) next++;
+    const from = prev >= 0 ? times[prev].end : cap.start;
+    const to = next < times.length ? times[next].start : cap.end;
+    const gapCount = (next < times.length ? next : times.length) - (prev + 1);
+    const idx = i - (prev + 1);
+    const step = Math.max(0.05, (to - from) / Math.max(1, gapCount));
+    times[i] = { start: from + step * idx, end: from + step * (idx + 1) };
+  }
+
+  // Nothing matched at all - fall back to an even spread.
+  if (!times.some(Boolean)) {
+    return parts.map((_, i) => ({
+      start: cap.start + (span * i) / parts.length,
+      end: cap.start + (span * (i + 1)) / parts.length,
+    }));
+  }
+  return times;
+}
+
 export function wordsOf(cap) {
   const parts = cap.text.split(/\s+/).filter(Boolean);
   if (!parts.length) return [];
 
-  const src = cap.words && cap.words.length === parts.length ? cap.words : null;
   const span = Math.max(0.001, cap.end - cap.start);
+  const hasTimes = cap.words && cap.words.length;
+  const times = hasTimes
+    ? alignTimes(parts, cap.words, cap)
+    : parts.map((_, i) => ({
+        start: cap.start + (span * i) / parts.length,
+        end: cap.start + (span * (i + 1)) / parts.length,
+      }));
 
   return parts.map((raw, i) => {
     // *asterisks* force the accent face on a word.
     const forced = /^\*.+\*$/.test(raw);
-    const text = forced ? raw.slice(1, -1) : raw;
     return {
-      text,
+      text: forced ? raw.slice(1, -1) : raw,
       forced,
-      start: src ? src[i].start : cap.start + (span * i) / parts.length,
-      end: src ? src[i].end : cap.start + (span * (i + 1)) / parts.length,
+      start: times[i].start,
+      end: times[i].end,
     };
   });
 }
@@ -238,10 +292,16 @@ export function drawCaptions(ctx, captions, t, W, H, style) {
         ctx.translate(x + wpx / 2, y);
         if (scale !== 1) ctx.scale(scale, scale);
         ctx.font = faceOf(w)(px);
-        ctx.lineWidth = px * (style.outline / 100);
-        ctx.strokeStyle = style.outlineColor;
+        // Canvas rejects lineWidth = 0 as invalid and silently keeps the old
+        // value, so testing ctx.lineWidth afterwards reads a stale number and
+        // strokes anyway. Decide from the style, and only assign when drawing.
+        const strokeW = px * (style.outline / 100);
+        if (strokeW > 0) {
+          ctx.lineWidth = strokeW;
+          ctx.strokeStyle = style.outlineColor;
+          ctx.strokeText(label(w), 0, 0);
+        }
         ctx.fillStyle = w.accent && style.accentColor ? style.accentColor : style.color;
-        if (ctx.lineWidth > 0) ctx.strokeText(label(w), 0, 0);
         ctx.fillText(label(w), 0, 0);
         ctx.restore();
       }
@@ -505,7 +565,8 @@ export function groupWords(words, perLine, maxGap = 0.7) {
     start: ws[0].start,
     end: ws[ws.length - 1].end,
     // Kept so the reveal styles can show each word as it is actually sung.
-    words: ws.map((w) => ({ start: w.start, end: w.end })),
+    // The text rides along so the times can be re-matched after an edit.
+    words: ws.map((w) => ({ text: w.text, start: w.start, end: w.end })),
   }));
 
   // Keep the list strictly ordered and non-overlapping: a caption whose end
@@ -641,8 +702,18 @@ export async function transcribe(audioBuffer, opts, onStatus) {
 
   // Timestamps come back relative to the slice; shift them into song time.
   const offset = window === audioBuffer ? 0 : startSec;
+  // The per-word times have to move with the line. Missing this left every word
+  // still measured from the slice while its caption sat in song time, so all of
+  // them read as "already started" and one-word reveal advanced once per line.
   const shifted = offset
-    ? raw.map((c) => ({ ...c, start: c.start + offset, end: c.end + offset }))
+    ? raw.map((c) => ({
+        ...c,
+        start: c.start + offset,
+        end: c.end + offset,
+        words: c.words && c.words.map((w) => ({
+          ...w, start: w.start + offset, end: w.end + offset,
+        })),
+      }))
     : raw;
 
   return {

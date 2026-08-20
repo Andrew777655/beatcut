@@ -1304,7 +1304,7 @@ function captionStyle() {
   return {
     size: Number($('capSize').value),
     position: $('capPos').value,
-    outline: Number($('capOutline').value),
+    outline: $('capOutlineOn').checked ? Number($('capOutline').value) : 0,
     color: $('capColor').value,
     accentColor: $('capAccentColor').value,
     outlineColor: $('capOutlineColor').value,
@@ -1735,8 +1735,12 @@ $('capReveal').addEventListener('input', () => {
   if (!state.playing) drawFrame(state.cursor);
 });
 
+$('capOutlineOn').addEventListener('input', () => {
+  $('capOutlineField').hidden = !$('capOutlineOn').checked;
+});
+
 for (const id of ['capOn', 'capSize', 'capPos', 'capOutline', 'capColor',
-                  'capAccentColor', 'capSwap', 'capPattern', 'capAccent',
+                  'capOutlineOn', 'capAccentColor', 'capSwap', 'capPattern', 'capAccent',
                   'capOutlineColor', 'capUpper', 'capPop', 'capBox']) {
   $(id).addEventListener('input', () => {
     syncLabels();
