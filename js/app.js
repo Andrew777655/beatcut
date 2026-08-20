@@ -15,11 +15,13 @@ const state = {
   // Times are absolute positions in the song, so trimming is just a window.
   tStart: 0,            // where the edit begins in the song
   tEnd: 0,              // where it ends
+  trimEnd: 0,           // the end marker the user set
   segments: [],         // {start, end, clipId, ov}
   captions: [],         // {id, text, start, end} in timeline seconds
   rendering: false,     // offline WebCodecs render in progress
   overrides: {},        // slot index -> per-slot edits, see DEFAULT_OV
   selected: null,       // index of the slot open in the inspector
+  selectedCaption: null, // index of the caption open in the Line tab
   duration: 0,          // timeline length in seconds
   playing: false,
   startedAt: 0,         // audioCtx time at t = 0
@@ -296,9 +298,13 @@ async function loadAudio(file) {
 
   // A new song invalidates any old trim window.
   state.tStart = 0;
+  state.trimEnd = decoded.duration;
   state.cursor = 0;
   $('trimStart').max = Math.max(0.1, decoded.duration - 0.5).toFixed(2);
   $('trimStart').value = 0;
+  $('trimEnd').max = decoded.duration.toFixed(2);
+  $('trimEnd').value = decoded.duration;
+  $('editLength').value = '0';
 
   $('bpm').value = result.bpm.toFixed(2);
   $('analyzeState').textContent =
@@ -425,8 +431,13 @@ function rebuild() {
   const maxClips = Number($('maxClips').value);
   const songEnd = state.audio ? state.audio.buffer.duration : 0;
   const from = clamp(state.tStart, 0, Math.max(0, songEnd - 0.2));
-  const maxLen = Number($('editLength').value); // 0 = to the end of the song
-  const until = clamp(maxLen > 0 ? from + maxLen : songEnd, from + 0.2, songEnd);
+  // A length preset just drives the end marker; the marker is the source of truth.
+  const preset = Number($('editLength').value);
+  const wanted = preset > 0 ? from + preset : (state.trimEnd || songEnd);
+  const until = clamp(wanted, from + 0.2, songEnd);
+  state.trimEnd = until;
+  if ($('trimEnd').max !== String(songEnd)) $('trimEnd').max = songEnd || 100;
+  $('trimEnd').value = until;
 
   const cuts = cutTimes().filter((t) => t > from + 0.06 && t < until - 0.06);
 
@@ -665,7 +676,8 @@ function drawFrame(t) {
   // Captions go through the same canvas as everything else, so the preview and
   // the exported file cannot drift apart.
   if ($('capOn').checked && state.captions.length) {
-    drawCaptions(sctx, state.captions, t, W, H, captionStyle());
+    // Only one caption is on screen at a time, so its style can be resolved here.
+    drawCaptions(sctx, state.captions, t, W, H, captionStyle(captionAt(state.captions, t)));
   }
 
   // Guides are an editing aid, so they must not reach the file.
@@ -950,12 +962,13 @@ function computePeaks(buffer, buckets) {
 // Peaks and cut markers only change when the audio or the timeline changes, so
 // they are cached. Redrawing 2000 bars every animation frame starves the
 // real-time recorder and shows up as dropped frames in the export.
+const WAVE_H = 70;
 let waveLayer = null;
 
 function buildWaveLayer() {
   const dpr = window.devicePixelRatio || 1;
   const cssW = wave.clientWidth || 800;
-  const H = 140;
+  const H = WAVE_H;
 
   wave.width = cssW * dpr;
   wave.height = H * dpr;
@@ -1005,7 +1018,7 @@ function buildWaveLayer() {
 
 function drawWave() {
   const cssW = wave.clientWidth || 800;
-  const H = 140;
+  const H = WAVE_H;
   wctx.clearRect(0, 0, cssW, H);
   if (!waveLayer || !state.audio) return;
 
@@ -1350,12 +1363,31 @@ function paintSlot(el, i) {
   el.title = clip ? `${i + 1} · ${clip.name}` : `${i + 1}`;
 }
 
+// Slots have a minimum width, so x is not simply time * scale. The lane is
+// measured as it is built and captions are mapped through the same table,
+// otherwise the two rows would drift apart on fast edits.
+let tlMap = [];
+
+function timeToX(t) {
+  if (!tlMap.length) return 0;
+  const first = tlMap[0];
+  const last = tlMap[tlMap.length - 1];
+  if (t <= first.start) return 0;
+  if (t >= last.end) return last.x + last.w;
+  for (const s of tlMap) {
+    if (t < s.end) return s.x + ((t - s.start) / (s.end - s.start)) * s.w;
+  }
+  return last.x + last.w;
+}
+
 function renderTimeline() {
   const tl = $('timeline');
   tl.innerHTML = '';
+  tlMap = [];
 
   if (!state.segments.length) {
     tl.innerHTML = '<div class="tl-empty">Load a song and some clips to build the timeline.</div>';
+    renderCapLane();
     return;
   }
 
@@ -1365,7 +1397,10 @@ function renderTimeline() {
     el.dataset.i = i;
     // Constant pixels-per-second, so a fast slot always looks shorter than a
     // slow one no matter how long the song is.
-    el.style.width = `${Math.max(26, (seg.end - seg.start) * TL_PX_PER_SEC)}px`;
+    const w = Math.max(26, (seg.end - seg.start) * TL_PX_PER_SEC);
+    el.style.width = `${w}px`;
+    const prev = tlMap[tlMap.length - 1];
+    tlMap.push({ start: seg.start, end: seg.end, x: prev ? prev.x + prev.w + 2 : 0, w });
     if (i === state.selected) el.classList.add('selected');
     paintSlot(el, i);
 
@@ -1391,7 +1426,50 @@ function renderTimeline() {
 
     tl.appendChild(el);
   });
+  renderCapLane();
   markPlayingSlot();
+}
+
+/** Caption blocks, laid on the same x scale as the clips above them. */
+function renderCapLane() {
+  const lane = $('capLane');
+  lane.innerHTML = '';
+  const last = tlMap[tlMap.length - 1];
+  lane.style.width = last ? `${last.x + last.w}px` : '100%';
+
+  if (!state.captions.length) {
+    lane.innerHTML = '<span class="caplane-empty">No captions yet</span>';
+    return;
+  }
+
+  state.captions.forEach((cap, i) => {
+    if (cap.end < state.tStart || cap.start > state.tEnd) return; // outside the edit
+    const x = timeToX(cap.start);
+    const w = Math.max(18, timeToX(cap.end) - x);
+    const el = document.createElement('div');
+    el.className = 'cap-block' + (cap.style ? ' styled' : '') +
+      (i === state.selectedCaption ? ' selected' : '');
+    el.style.left = `${x}px`;
+    el.style.width = `${w}px`;
+    el.textContent = cap.text;
+    el.title = `${fmtMs(cap.start)} → ${fmtMs(cap.end)} · ${cap.text}`;
+    el.addEventListener('click', () => selectCaption(i));
+    lane.appendChild(el);
+  });
+}
+
+function selectCaption(i) {
+  state.selectedCaption = i;
+  const cap = state.captions[i];
+  if (cap) {
+    state.cursor = clamp(cap.start + 0.01, state.tStart, state.tEnd);
+    lastSegment = null;
+    if (state.playing) play(state.cursor);
+    else { drawFrame(state.cursor); drawWave(); }
+  }
+  renderCapLane();
+  syncLineInspector();
+  showPane('line');
 }
 
 /** Highlight the slot under the playhead without rebuilding the strip. */
@@ -1544,23 +1622,34 @@ const fmtMs = (s) => {
 
 /* =========================================================== captions == */
 
-function captionStyle() {
-  const pairing = pairingById($('capFont').value);
-  const swap = $('capSwap').checked;
+/**
+ * Resolved style for one caption. A line carrying its own `style` overrides the
+ * shared settings field by field; everything it does not name still follows the
+ * Text tab, so changing the shared size still moves lines that only overrode a
+ * colour.
+ */
+function captionStyle(cap) {
+  const o = (cap && cap.style) || {};
+  const pick = (key, fallback) => (o[key] !== undefined ? o[key] : fallback);
+
+  const pairing = pairingById(pick('font', $('capFont').value));
+  const swap = pick('swap', $('capSwap').checked);
   const mainSlot = swap ? 'accent' : 'main';
   const accentSlot = swap ? 'main' : 'accent';
+  const outlineOn = pick('outlineOn', $('capOutlineOn').checked);
 
   return {
-    size: Number($('capSize').value),
-    position: $('capPos').value,
-    outline: $('capOutlineOn').checked ? Number($('capOutline').value) : 0,
-    color: $('capColor').value,
-    accentColor: $('capAccentColor').value,
-    outlineColor: $('capOutlineColor').value,
-    uppercase: $('capUpper').checked,
+    size: pick('size', Number($('capSize').value)),
+    position: pick('position', $('capPos').value),
+    offset: pick('offset', 0),
+    outline: outlineOn ? pick('outline', Number($('capOutline').value)) : 0,
+    color: pick('color', $('capColor').value),
+    accentColor: pick('accentColor', $('capAccentColor').value),
+    outlineColor: pick('outlineColor', $('capOutlineColor').value),
+    uppercase: pick('uppercase', $('capUpper').checked),
     pop: $('capPop').checked,
     box: $('capBox').checked,
-    reveal: $('capReveal').value,
+    reveal: pick('reveal', $('capReveal').value),
     pattern: $('capPattern').value,
     accentRate: Number($('capAccent').value) / 100,
     // Passed as functions so the renderer can size each word independently.
@@ -1605,6 +1694,12 @@ function placeCaptions() {
  */
 function captionsChanged() {
   renderCaptionList();
+  // The selected line may not exist any more after a re-transcribe or a clear.
+  if (state.selectedCaption != null && !state.captions[state.selectedCaption]) {
+    state.selectedCaption = null;
+  }
+  renderCapLane();
+  syncLineInspector();
   const mode = $('mode').value;
   if (mode === 'words' || mode === 'gridwords') {
     syncModeFields();
@@ -1668,6 +1763,89 @@ function markActiveCaption() {
   for (const li of $('capList').children) {
     li.classList.toggle('active', li.dataset.id === id);
   }
+}
+
+/* ------------------------------------------------- per-line inspector -- */
+
+// Style key -> the control that sets it. Written out rather than derived from
+// the key: two of the ids don't match their key and a generated name silently
+// resolves to null.
+const LINE_FIELDS = [
+  ['font', 'lnFont', (el) => el.value],
+  ['swap', 'lnSwap', (el) => el.checked],
+  ['reveal', 'lnReveal', (el) => el.value],
+  ['size', 'lnSize', (el) => Number(el.value)],
+  ['position', 'lnPos', (el) => el.value],
+  ['offset', 'lnOffset', (el) => Number(el.value)],
+  ['outlineOn', 'lnOutlineOn', (el) => el.checked],
+  ['outline', 'lnOutline', (el) => Number(el.value)],
+  ['color', 'lnColor', (el) => el.value],
+  ['accentColor', 'lnAccentColor', (el) => el.value],
+  ['outlineColor', 'lnOutlineColor', (el) => el.value],
+  ['uppercase', 'lnUpper', (el) => el.checked],
+];
+
+function syncLineInspector() {
+  const i = state.selectedCaption;
+  const cap = i != null ? state.captions[i] : null;
+
+  $('lineInsp').hidden = !cap;
+  $('lineEmpty').hidden = !!cap;
+  $('tabLine').disabled = !cap;
+
+  if (!cap) {
+    if ($('tabLine').classList.contains('is-on')) showPane('text');
+    return;
+  }
+
+  $('lnTitle').textContent = `Line ${i + 1}`;
+  $('lnMeta').textContent =
+    `${fmtMs(cap.start)} → ${fmtMs(cap.end)} · ${(cap.end - cap.start).toFixed(2)}s`;
+  $('lnText').value = cap.text;
+
+  const on = !!cap.style;
+  $('lnOverride').checked = on;
+  $('lnFields').hidden = !on;
+
+  // Seed the controls from whatever this line currently resolves to, so turning
+  // the override on changes nothing until something is actually moved.
+  const s = captionStyle(cap);
+  const own = cap.style || {};
+  $('lnFont').value = own.font !== undefined ? own.font : $('capFont').value;
+  $('lnSwap').checked = own.swap !== undefined ? own.swap : $('capSwap').checked;
+  $('lnReveal').value = s.reveal;
+  $('lnSize').value = s.size;
+  $('lnPos').value = s.position;
+  $('lnOffset').value = s.offset;
+  $('lnOutlineOn').checked = s.outline > 0;
+  $('lnOutline').value = s.outline || Number($('capOutline').value);
+  $('lnColor').value = s.color;
+  $('lnAccentColor').value = s.accentColor;
+  $('lnOutlineColor').value = s.outlineColor;
+  $('lnUpper').checked = s.uppercase;
+  syncLineLabels();
+}
+
+function syncLineLabels() {
+  $('lnSizeVal').textContent = `${Number($('lnSize').value).toFixed(1)}%`;
+  $('lnOutlineVal').textContent = `${$('lnOutline').value}%`;
+  $('lnOffsetVal').textContent = `${$('lnOffset').value}%`;
+}
+
+function applyLineInspector() {
+  const i = state.selectedCaption;
+  const cap = i != null ? state.captions[i] : null;
+  if (!cap) return;
+
+  if (!$('lnOverride').checked) {
+    delete cap.style;
+  } else {
+    cap.style = {};
+    for (const [key, id, read] of LINE_FIELDS) cap.style[key] = read($(id));
+  }
+  syncLineLabels();
+  renderCapLane();
+  if (!state.playing) drawFrame(state.cursor);
 }
 
 async function runTranscribe() {
@@ -1815,6 +1993,9 @@ function syncLabels() {
   $('transLenVal').textContent = `${$('transLen').value} ms`;
   $('minGapVal').textContent = `${Number($('minGap').value).toFixed(2)}s`;
   $('trimStartVal').textContent = fmtMs(Number($('trimStart').value));
+  $('trimEndVal').textContent = fmtMs(Number($('trimEnd').value));
+  $('editLengthVal').textContent =
+    Number($('editLength').value) > 0 ? `${$('editLength').value}s` : 'custom';
   $('capAccentVal').textContent = `${$('capAccent').value}%`;
   $('capSizeVal').textContent = `${Number($('capSize').value).toFixed(1)}%`;
   $('capOutlineVal').textContent = `${$('capOutline').value}%`;
@@ -1865,6 +2046,13 @@ $('btnClear').addEventListener('click', () => {
   rebuild();
 });
 
+function toggleFullscreen() {
+  const wrap = document.querySelector('.canvas-wrap');
+  if (document.fullscreenElement) document.exitFullscreen();
+  else wrap.requestFullscreen().catch(() => {});
+}
+$('btnFull').addEventListener('click', toggleFullscreen);
+
 $('btnExport').addEventListener('click', startExport);
 $('btnCancelExport').addEventListener('click', cancelExport);
 
@@ -1880,13 +2068,33 @@ $('trimStart').addEventListener('input', () => {
 $('trimHere').addEventListener('click', () => {
   state.tStart = state.cursor;
   $('trimStart').value = state.tStart;
+  $('editLength').value = '0'; // a hand-placed marker is no longer a preset length
+  syncLabels();
+  rebuild();
+});
+
+$('trimEnd').addEventListener('input', () => {
+  state.trimEnd = Number($('trimEnd').value);
+  $('editLength').value = '0';
+  syncLabels();
+  pause();
+  lastSegment = null;
+  rebuild();
+});
+
+$('trimEndHere').addEventListener('click', () => {
+  state.trimEnd = state.cursor;
+  $('trimEnd').value = state.trimEnd;
+  $('editLength').value = '0';
   syncLabels();
   rebuild();
 });
 
 $('trimReset').addEventListener('click', () => {
   state.tStart = 0;
+  state.trimEnd = state.audio ? state.audio.buffer.duration : 0;
   $('trimStart').value = 0;
+  $('trimEnd').value = state.trimEnd;
   $('editLength').value = '0';
   state.cursor = 0;
   lastSegment = null;
@@ -2000,6 +2208,49 @@ function showPane(name) {
   document.querySelector('.panes').scrollTop = 0;
 }
 
+for (const [, id] of LINE_FIELDS) {
+  $(id).addEventListener('input', applyLineInspector);
+}
+$('lnOverride').addEventListener('input', () => {
+  $('lnFields').hidden = !$('lnOverride').checked;
+  applyLineInspector();
+});
+$('lnReset').addEventListener('click', () => {
+  $('lnOverride').checked = false;
+  $('lnFields').hidden = true;
+  applyLineInspector();
+  syncLineInspector();
+});
+$('lnClose').addEventListener('click', () => {
+  state.selectedCaption = null;
+  renderCapLane();
+  syncLineInspector();
+});
+$('lnText').addEventListener('input', () => {
+  const cap = state.captions[state.selectedCaption];
+  if (!cap) return;
+  cap.text = $('lnText').value;
+  renderCapLane();
+  renderCaptionList();
+  const mode = $('mode').value;
+  if (mode === 'words' || mode === 'gridwords') rebuild();
+  else if (!state.playing) drawFrame(state.cursor);
+});
+for (const [btn, delta] of [['lnNudgeL', -0.1], ['lnNudgeR', 0.1]]) {
+  $(btn).addEventListener('click', () => {
+    const cap = state.captions[state.selectedCaption];
+    if (!cap) return;
+    cap.start += delta;
+    cap.end += delta;
+    if (cap.words) cap.words = cap.words.map((w) => ({
+      ...w, start: w.start + delta, end: w.end + delta,
+    }));
+    syncLineInspector();
+    renderCapLane();
+    if (!state.playing) drawFrame(state.cursor);
+  });
+}
+
 $('tabs').addEventListener('click', (e) => {
   const btn = e.target.closest('.tab');
   if (btn && !btn.disabled) showPane(btn.dataset.pane);
@@ -2042,9 +2293,15 @@ wave.addEventListener('click', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') {
+  const typing = e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' ||
+    e.target.tagName === 'TEXTAREA';
+  if (typing) return;
+  if (e.code === 'Space') {
     e.preventDefault();
     state.playing ? pause() : play();
+  } else if (e.key === 'f' || e.key === 'F') {
+    e.preventDefault();
+    toggleFullscreen();
   }
 });
 
@@ -2099,10 +2356,13 @@ window.beatcut = {
   EFFECTS, TRANSITIONS,
 };
 
-$('capFont').innerHTML = PAIRINGS
+const pairingOptions = PAIRINGS
   .map((p) => `<option value="${p.id}">${p.label}</option>`)
   .join('');
+$('capFont').innerHTML = pairingOptions;
+$('lnFont').innerHTML = pairingOptions;
 applyPairing();
+syncLineInspector();
 
 fillSelect($('effect'), EFFECTS);
 fillSelect($('transition'), TRANSITIONS);

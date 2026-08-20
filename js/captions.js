@@ -246,10 +246,13 @@ export function drawCaptions(ctx, captions, t, W, H, style) {
 
   const lineH = fontPx * 1.18;
   const block = laidOut.length * lineH;
-  const anchor =
-    style.position === 'top' ? H * 0.16 :
-    style.position === 'middle' ? H * 0.5 :
-    H * 0.80;
+  const base =
+    style.position === 'top' ? 0.16 :
+    style.position === 'middle' ? 0.5 :
+    0.80;
+  // Per-line nudge, as a share of frame height - lets one caption clear the
+  // platform UI without moving every other line.
+  const anchor = H * (base + (style.offset || 0) / 100);
   const top = anchor - block / 2 + lineH / 2;
 
   // Whole-caption pop on entry (skipped per-word modes, which pop individually).

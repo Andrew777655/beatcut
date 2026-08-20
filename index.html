@@ -61,16 +61,20 @@
           <label class="vol">
             Vol <input type="range" id="volume" min="0" max="1" step="0.01" value="0.9" />
           </label>
+          <button id="btnFull" class="ghost" title="Full screen preview (F)">⛶</button>
         </div>
 
-        <canvas id="wave" class="wave" height="140"></canvas>
+        <canvas id="wave" class="wave" height="70"></canvas>
         <p class="hint center">Click the waveform to scrub. Vertical lines are cut points.</p>
 
         <div class="tl-head">
           <span>Timeline</span>
-          <span class="hint" id="tlHint">Click a slot to edit it · drag a tile from the left onto a slot to swap it</span>
+          <span class="hint" id="tlHint">Click a clip or a caption to edit it on its own</span>
         </div>
-        <div class="timeline" id="timeline"></div>
+        <div class="tl-scroll" id="tlScroll">
+          <div class="timeline" id="timeline"></div>
+          <div class="caplane" id="capLane"></div>
+        </div>
       </section>
 
       <!-- --------------------------------------------------- settings --- -->
@@ -79,7 +83,8 @@
           <button type="button" class="tab is-on" data-pane="cut">Cut</button>
           <button type="button" class="tab" data-pane="look">Look</button>
           <button type="button" class="tab" data-pane="text">Text</button>
-          <button type="button" class="tab" id="tabSlot" data-pane="slot" disabled>Slot</button>
+          <button type="button" class="tab" id="tabSlot" data-pane="slot" disabled>Clip</button>
+          <button type="button" class="tab" id="tabLine" data-pane="line" disabled>Line</button>
         </nav>
 
         <div class="panes">
@@ -152,6 +157,82 @@
             <button id="inspReset" class="ghost">Reset slot</button>
           </div>
           <hr class="sep" />
+        </section>
+        </div>
+
+        <div class="pane" data-pane="line">
+        <p class="empty" id="lineEmpty">
+          Click a caption block on the timeline to style that line on its own.
+        </p>
+        <section id="lineInsp" hidden>
+          <h3 class="insp-head">
+            <span id="lnTitle">Line</span>
+            <button id="lnClose" class="linkish" title="Deselect">✕</button>
+          </h3>
+          <div class="hint" id="lnMeta"></div>
+
+          <section class="grp">
+          <h3>Text</h3>
+          <textarea id="lnText" rows="2" placeholder="This line's words"></textarea>
+          <div class="row">
+            <button id="lnNudgeL" class="ghost">◀ 0.1s</button>
+            <button id="lnNudgeR" class="ghost">0.1s ▶</button>
+          </div>
+          </section>
+
+          <section class="grp">
+          <h3>Style</h3>
+          <label class="checkline">
+            <input type="checkbox" id="lnOverride" /> Style this line separately
+          </label>
+          <div id="lnFields" hidden>
+            <label class="field">
+              Font pairing
+              <select id="lnFont"></select>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="lnSwap" /> Swap main / accent
+            </label>
+            <label class="field">
+              Word reveal
+              <select id="lnReveal">
+                <option value="all">Whole line at once</option>
+                <option value="word">One word at a time</option>
+                <option value="stack">Stacked build</option>
+              </select>
+            </label>
+            <label class="field">
+              Size <span class="val" id="lnSizeVal">6.5%</span>
+              <input type="range" id="lnSize" min="2" max="14" step="0.1" value="6.5" />
+            </label>
+            <label class="field">
+              Position
+              <select id="lnPos">
+                <option value="bottom">Lower third</option>
+                <option value="middle">Centre</option>
+                <option value="top">Upper third</option>
+              </select>
+            </label>
+            <label class="field">
+              Nudge up / down <span class="val" id="lnOffsetVal">0%</span>
+              <input type="range" id="lnOffset" min="-40" max="40" step="1" value="0" />
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="lnOutlineOn" checked /> Outline
+            </label>
+            <label class="field">
+              Outline weight <span class="val" id="lnOutlineVal">14%</span>
+              <input type="range" id="lnOutline" min="0" max="40" step="1" value="14" />
+            </label>
+            <div class="row">
+              <label class="field">Text <input type="color" id="lnColor" value="#ffffff" /></label>
+              <label class="field">Accent <input type="color" id="lnAccentColor" value="#ffd166" /></label>
+              <label class="field">Outline <input type="color" id="lnOutlineColor" value="#000000" /></label>
+            </div>
+            <label class="checkline"><input type="checkbox" id="lnUpper" checked /> UPPERCASE</label>
+            <button id="lnReset" class="ghost wide">Back to the shared style</button>
+          </div>
+          </section>
         </section>
         </div>
 
@@ -229,9 +310,25 @@
         <h3>Length &amp; section</h3>
 
         <label class="field">
-          Edit length
+          Start <span class="val" id="trimStartVal">0:00.0</span>
+          <input type="range" id="trimStart" min="0" max="100" step="0.05" value="0" />
+        </label>
+        <div class="row">
+          <button id="trimHere" class="ghost">Set to playhead</button>
+        </div>
+
+        <label class="field">
+          End <span class="val" id="trimEndVal">0:00.0</span>
+          <input type="range" id="trimEnd" min="0" max="100" step="0.05" value="100" />
+        </label>
+        <div class="row">
+          <button id="trimEndHere" class="ghost">Set to playhead</button>
+        </div>
+
+        <label class="field">
+          Snap length to <span class="val" id="editLengthVal">custom</span>
           <select id="editLength">
-            <option value="0" selected>Rest of the song</option>
+            <option value="0" selected>Custom (use the markers)</option>
             <option value="7">7 seconds</option>
             <option value="10">10 seconds</option>
             <option value="15">15 seconds</option>
@@ -241,13 +338,7 @@
             <option value="60">60 seconds</option>
           </select>
         </label>
-
-        <label class="field">
-          Start of the song part <span class="val" id="trimStartVal">0:00.0</span>
-          <input type="range" id="trimStart" min="0" max="100" step="0.05" value="0" />
-        </label>
         <div class="row">
-          <button id="trimHere" class="ghost">Start here (playhead)</button>
           <button id="trimReset" class="ghost">Whole song</button>
         </div>
 

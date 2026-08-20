@@ -47,7 +47,8 @@ Vercel project settings should read: Framework Preset **Other**, Build Command
    can't decode (HEVC `.mov` from an iPhone is the usual culprit) is reported
    under the picker rather than silently becoming a black frame.
 3. **Preview** — press ▶ (or spacebar). Click anywhere on the waveform to scrub.
-   The pink vertical lines are the cut points.
+   The pink vertical lines are the cut points. **⛶ or the F key** puts the preview
+   full screen, and playback keeps running while it's there.
 4. **Timeline** — the strip under the waveform is one block per cut, sized by how
    long it's on screen, so you can see the pacing. Click a block to open the
    inspector and edit that slot on its own. Drag a tile from the clips panel onto
@@ -123,6 +124,20 @@ its own caption, timed individually. Word timings survive editing the text — t
 displayed words are matched back to the timed ones by their spelling rather than
 their position, so correcting a mistake doesn't throw away the timing for the
 rest of the line.
+
+### Styling one line differently
+
+Captions appear as blocks on the timeline's lower lane. Click one to open the
+**Line** tab, where you can edit its words, nudge its timing in tenths of a second,
+and — with **Style this line separately** — give it its own font pairing, reveal
+mode, size, position, vertical nudge, outline, colours and casing.
+
+Overrides are per field, not all-or-nothing: a line that only overrides its colour
+still follows the shared Text tab for everything else, so changing the shared size
+still moves it. **Back to the shared style** clears the override entirely.
+
+The vertical **Nudge up / down** is there for one caption that collides with the
+platform UI — lift that line clear without moving every other one.
 
 ### Accent words
 
@@ -281,10 +296,13 @@ The right panel is split into four tabs, each holding a few grouped cards:
 | **Cut** | Rhythm · Tempo · Length & section | Where the cuts land, BPM, and which part of the song you're using |
 | **Look** | Frame · Motion · Guides · Audio | Aspect, default effect and transition, safe zones, clip audio |
 | **Text** | Lines · Auto-transcribe · Timed lines · Type · Reveal · Size & colour | Everything to do with captions |
-| **Slot** | — | The selected clip on its own. Enabled only when a timeline block is selected |
+| **Clip** | — | The selected clip on its own. Enabled when a clip block is selected |
+| **Line** | Text · Style | The selected caption on its own. Enabled when a caption block is selected |
 
-Clicking a block in the timeline opens the **Slot** tab automatically; closing the
-inspector returns you to **Cut**. Changing a setting in any other tab never moves
+The timeline has two lanes on one scroller: clips on top, captions underneath.
+Clicking a clip opens the **Clip** tab, clicking a caption opens **Line**; closing
+either returns you to where you were. A caption block turns orange once it carries
+its own style. Changing a setting in any other tab never moves
 you, so you can edit a slot and keep adjusting the cut settings without the panel
 jumping around.
 
@@ -351,15 +369,16 @@ manual change.
 a hair late, drag it negative. Cutting slightly *before* the beat usually reads
 better than slightly after.
 
-**Edit length** — how long the finished video is: 7, 10, 15, 20, 30, 45, 60 seconds,
-or the rest of the song. 15 s or under is the safe range for a hook-driven edit.
+**Start** and **End** are two independent markers. Drag either slider, or scrub the
+waveform to the moment you want and hit its **Set to playhead**. Together they pick
+any window of the song — the chorus rather than the intro, ending exactly where the
+phrase does rather than at some round number of seconds. The waveform dims
+everything outside the window, and the exported file contains only that window.
 
-**Start of the song part** — where in the track the edit begins. Drag the slider,
-or scrub the waveform to the moment you want and hit **Start here (playhead)**.
-Together with Edit length this picks any window of the song — the chorus rather
-than the intro, say. The waveform dims everything outside that window so you can
-see what's actually being used, and the exported file contains only that window.
-**Whole song** resets both.
+**Snap length to** is a shortcut, not a separate setting: pick 15 seconds and it
+moves the End marker to 15 seconds after Start. Move either marker by hand
+afterwards and it drops back to *Custom*, since the markers are the real source of
+truth. **Whole song** resets both.
 
 **Stop after** — cap the edit at 8/16/24/32 clips. Whichever runs out first,
 this or the edit length, ends the video.
