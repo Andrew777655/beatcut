@@ -78,31 +78,29 @@ off entirely for clean flat type; the weight slider appears only while it's on.
 
 ### Fonts
 
-Six pairings, each a heavy **main** face plus a softer **accent** face:
+Two independent pickers — **Main font** for the body of the caption and **Accent
+font** for the occasional word — chosen from around sixty faces grouped as:
 
-| Pairing | Main | Accent |
-| --- | --- | --- |
-| Tempting + Switzer | Switzer | Tempting |
-| Athelas + Vanguard | Vanguard | Athelas |
-| Inter + Times New Roman | Inter | Times New Roman |
-| Arial Bold + Epic Pro | Arial Bold | Epic Pro |
-| Shadow Light + BALBOA | BALBOA | Shadow Light |
-| Archivo + Stix | Archivo | STIX Two Text |
+| Group | For |
+| --- | --- |
+| **Display** | Heavy poster faces — Anton, Bebas Neue, Archivo Black, Clash Display, Bungee, Alfa Slab One, Bangers, Luckiest Guy, Orbitron… |
+| **Sans** | Inter, Montserrat, Poppins, Switzer, Satoshi, Cabinet Grotesk, Kanit, Barlow Condensed… |
+| **Serif** | Playfair Display, DM Serif Display, Melodrama, Zodiak, Cormorant, STIX Two Text… |
+| **Script** | Yellowtail, Great Vibes, Pacifico, Parisienne, Kaushan, Permanent Marker, Caveat… |
+| **On your system** | Arial, Impact, Times New Roman, Georgia, Verdana, Courier New |
 
-**Swap main / accent** flips which face is the heavy one, since which reads as
-"main" is a matter of taste.
+Defaults are Anton over Yellowtail. Any combination is allowed — nothing is locked
+to a partner, so a display main with a serif accent is as easy as the obvious
+bold-plus-script.
 
-**A licensing note.** Switzer, Inter, Archivo, STIX Two Text, Arial and Times New
-Roman load legitimately — free, Google-hosted, or already on your system.
-Tempting, Vanguard, Athelas, Epic Pro, Shadow Light and BALBOA are commercial
-retail fonts that can't be redistributed, so those slots use free faces picked to
-sit in the same visual territory (Yellowtail, Anton, Lora, Great Vibes, Oswald,
-Parisienne). The panel names every substitution rather than pretending.
+Only the faces actually in use are downloaded, on demand, so switching to a font
+costs one small fetch rather than pulling all sixty up front.
 
-If you own a licence for the real thing, drop the `.woff2` into a `fonts/` folder
-and add a `local: { family, url, weight }` entry to that slot in
-[`js/fonts.js`](js/fonts.js) — it is preferred over the substitute automatically
-and the "substituted" note disappears.
+**Everything in the list is genuinely what it says**: Google Fonts, Fontshare's
+free library, or a face already installed on your machine. Nothing is a stand-in
+for a font that can't be shipped. To add a licensed font you own, drop the
+`.woff2` into a `fonts/` folder and add an entry with a `url` in
+[`js/fonts.js`](js/fonts.js).
 
 ### Word reveal
 

@@ -187,13 +187,14 @@
           </label>
           <div id="lnFields" hidden>
             <label class="field">
-              Font pairing
+              Main font
               <select id="lnFont"></select>
             </label>
-            <label class="checkline">
-              <input type="checkbox" id="lnSwap" /> Swap main / accent
-            </label>
             <label class="field">
+              Accent font
+              <select id="lnAccentFont"></select>
+            </label>
+            <label class="field" id="lnRevealField">
               Word reveal
               <select id="lnReveal">
                 <option value="all">Whole line at once</option>
@@ -550,14 +551,15 @@
         <h3>Type</h3>
 
         <label class="field">
-          Font pairing
+          Main font
           <select id="capFont"></select>
         </label>
-        <div class="hint" id="capFontNote"></div>
 
-        <label class="checkline">
-          <input type="checkbox" id="capSwap" /> Swap main / accent
+        <label class="field">
+          Accent font <span class="scope">occasional words</span>
+          <select id="capAccentFont"></select>
         </label>
+        <div class="hint" id="capFontNote"></div>
 
         </section>
 

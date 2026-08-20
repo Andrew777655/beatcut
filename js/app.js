@@ -2,7 +2,7 @@ import { analyze, buildGrid, pickOnsets } from './analysis.js';
 import {
   drawCaptions, captionAt, distribute, snapToBeat, transcribe, wordsOf,
 } from './captions.js';
-import { PAIRINGS, pairingById, loadPairing, fontString } from './fonts.js';
+import { FONTS, fontById, fontOptions, loadFont, fontString } from './fonts.js';
 import { renderFast, fastExportSupported } from './export.js';
 
 /* ================================================================ state == */
@@ -1632,10 +1632,8 @@ function captionStyle(cap) {
   const o = (cap && cap.style) || {};
   const pick = (key, fallback) => (o[key] !== undefined ? o[key] : fallback);
 
-  const pairing = pairingById(pick('font', $('capFont').value));
-  const swap = pick('swap', $('capSwap').checked);
-  const mainSlot = swap ? 'accent' : 'main';
-  const accentSlot = swap ? 'main' : 'accent';
+  const mainFace = fontById(pick('fontMain', $('capFont').value));
+  const accentFace = fontById(pick('fontAccent', $('capAccentFont').value));
   const outlineOn = pick('outlineOn', $('capOutlineOn').checked);
 
   return {
@@ -1653,22 +1651,24 @@ function captionStyle(cap) {
     pattern: $('capPattern').value,
     accentRate: Number($('capAccent').value) / 100,
     // Passed as functions so the renderer can size each word independently.
-    mainFont: (px) => fontString(pairing, mainSlot, px),
-    accentFont: (px) => fontString(pairing, accentSlot, px),
+    mainFont: (px) => fontString(mainFace, px),
+    accentFont: (px) => fontString(accentFace, px),
   };
 }
 
-async function applyPairing() {
-  const pairing = pairingById($('capFont').value);
-  const subs = ['main', 'accent']
-    .map((s) => pairing[s])
-    .filter((f) => f.substitute)
-    .map((f) => `${f.name} → ${f.substitute}`);
-  $('capFontNote').textContent = subs.length
-    ? `Substituted (original is a paid licence): ${subs.join(', ')}`
-    : 'Both faces are the real thing.';
+/** Fetch whichever faces are in play, then repaint with them. */
+async function applyFonts() {
+  const wanted = new Set([$('capFont').value, $('capAccentFont').value]);
+  for (const cap of state.captions) {
+    if (!cap.style) continue;
+    if (cap.style.fontMain) wanted.add(cap.style.fontMain);
+    if (cap.style.fontAccent) wanted.add(cap.style.fontAccent);
+  }
+  $('capFontNote').textContent =
+    `${$('capAccentFont').selectedOptions[0].text} lands on the occasional word — ` +
+    'set how often below.';
 
-  await loadPairing(pairing);
+  await Promise.all([...wanted].map((id) => loadFont(fontById(id))));
   if (!state.playing) drawFrame(state.cursor);
 }
 
@@ -1771,8 +1771,8 @@ function markActiveCaption() {
 // the key: two of the ids don't match their key and a generated name silently
 // resolves to null.
 const LINE_FIELDS = [
-  ['font', 'lnFont', (el) => el.value],
-  ['swap', 'lnSwap', (el) => el.checked],
+  ['fontMain', 'lnFont', (el) => el.value],
+  ['fontAccent', 'lnAccentFont', (el) => el.value],
   ['reveal', 'lnReveal', (el) => el.value],
   ['size', 'lnSize', (el) => Number(el.value)],
   ['position', 'lnPos', (el) => el.value],
@@ -1811,9 +1811,13 @@ function syncLineInspector() {
   // the override on changes nothing until something is actually moved.
   const s = captionStyle(cap);
   const own = cap.style || {};
-  $('lnFont').value = own.font !== undefined ? own.font : $('capFont').value;
-  $('lnSwap').checked = own.swap !== undefined ? own.swap : $('capSwap').checked;
+  $('lnFont').value = own.fontMain !== undefined ? own.fontMain : $('capFont').value;
+  $('lnAccentFont').value =
+    own.fontAccent !== undefined ? own.fontAccent : $('capAccentFont').value;
   $('lnReveal').value = s.reveal;
+
+  // A one-word line has nothing to reveal progressively.
+  $('lnRevealField').hidden = wordsOf(cap).length < 2;
   $('lnSize').value = s.size;
   $('lnPos').value = s.position;
   $('lnOffset').value = s.offset;
@@ -2256,7 +2260,11 @@ $('tabs').addEventListener('click', (e) => {
   if (btn && !btn.disabled) showPane(btn.dataset.pane);
 });
 
-$('capFont').addEventListener('change', applyPairing);
+$('capFont').addEventListener('change', applyFonts);
+$('capAccentFont').addEventListener('change', applyFonts);
+// A per-line face has to be fetched too before the canvas can draw with it.
+$('lnFont').addEventListener('change', applyFonts);
+$('lnAccentFont').addEventListener('change', applyFonts);
 $('capReveal').addEventListener('input', () => {
   $('capPatternField').hidden = $('capReveal').value !== 'stack';
   if (!state.playing) drawFrame(state.cursor);
@@ -2267,7 +2275,7 @@ $('capOutlineOn').addEventListener('input', () => {
 });
 
 for (const id of ['capOn', 'capSize', 'capPos', 'capOutline', 'capColor',
-                  'capOutlineOn', 'capAccentColor', 'capSwap', 'capPattern', 'capAccent',
+                  'capOutlineOn', 'capAccentColor', 'capPattern', 'capAccent',
                   'capOutlineColor', 'capUpper', 'capPop', 'capBox']) {
   $(id).addEventListener('input', () => {
     syncLabels();
@@ -2356,12 +2364,13 @@ window.beatcut = {
   EFFECTS, TRANSITIONS,
 };
 
-const pairingOptions = PAIRINGS
-  .map((p) => `<option value="${p.id}">${p.label}</option>`)
-  .join('');
-$('capFont').innerHTML = pairingOptions;
-$('lnFont').innerHTML = pairingOptions;
-applyPairing();
+const fontMenu = fontOptions();
+for (const id of ['capFont', 'capAccentFont', 'lnFont', 'lnAccentFont']) {
+  $(id).innerHTML = fontMenu;
+}
+$('capFont').value = 'anton';         // heavy display reads best as the main face
+$('capAccentFont').value = 'yellowtail'; // script, for the occasional word
+applyFonts();
 syncLineInspector();
 
 fillSelect($('effect'), EFFECTS);
