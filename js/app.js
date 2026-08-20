@@ -3,6 +3,7 @@ import {
   drawCaptions, captionAt, distribute, snapToBeat, transcribe, wordsOf,
 } from './captions.js';
 import { PAIRINGS, pairingById, loadPairing, fontString } from './fonts.js';
+import { renderFast, fastExportSupported } from './export.js';
 
 /* ================================================================ state == */
 
@@ -16,6 +17,7 @@ const state = {
   tEnd: 0,              // where it ends
   segments: [],         // {start, end, clipId, ov}
   captions: [],         // {id, text, start, end} in timeline seconds
+  rendering: false,     // offline WebCodecs render in progress
   overrides: {},        // slot index -> per-slot edits, see DEFAULT_OV
   selected: null,       // index of the slot open in the inspector
   duration: 0,          // timeline length in seconds
@@ -666,6 +668,9 @@ function drawFrame(t) {
     drawCaptions(sctx, state.captions, t, W, H, captionStyle());
   }
 
+  // Guides are an editing aid, so they must not reach the file.
+  if (!state.exporting && !state.rendering) drawSafeZones(W, H);
+
   // Keep short videos looping inside a long segment, back to their in-point.
   const ov = seg.ov || DEFAULT_OV;
   if (clip.kind === 'video' && state.playing && clip.el.duration) {
@@ -797,6 +802,64 @@ function drawTransition(kind, p, prev, seg, t, W, H) {
   return e;
 }
 
+// Fractions of the frame each app covers with its own UI. Deliberately a little
+// generous - being slightly too cautious costs nothing, a covered caption costs
+// the whole video.
+const SAFE_ZONES = {
+  shorts: { name: 'YouTube Shorts', top: 0.06, bottom: 0.20, left: 0.03, right: 0.14 },
+  tiktok: { name: 'TikTok', top: 0.09, bottom: 0.22, left: 0.03, right: 0.17 },
+  reels: { name: 'Instagram Reels', top: 0.10, bottom: 0.21, left: 0.03, right: 0.15 },
+};
+
+function safeZoneFor(key) {
+  if (key === 'all') {
+    const all = Object.values(SAFE_ZONES);
+    return {
+      name: 'All platforms',
+      top: Math.max(...all.map((z) => z.top)),
+      bottom: Math.max(...all.map((z) => z.bottom)),
+      left: Math.max(...all.map((z) => z.left)),
+      right: Math.max(...all.map((z) => z.right)),
+    };
+  }
+  return SAFE_ZONES[key] || null;
+}
+
+/** Preview-only overlay. Never called while rendering the output file. */
+function drawSafeZones(W, H) {
+  const zone = safeZoneFor($('safeZone').value);
+  if (!zone) return;
+
+  const x0 = W * zone.left;
+  const x1 = W * (1 - zone.right);
+  const y0 = H * zone.top;
+  const y1 = H * (1 - zone.bottom);
+
+  sctx.save();
+  sctx.filter = 'none';
+  sctx.globalAlpha = 1;
+
+  // Dim everything the platform will cover.
+  sctx.fillStyle = 'rgba(0,0,0,0.45)';
+  sctx.fillRect(0, 0, W, y0);
+  sctx.fillRect(0, y1, W, H - y1);
+  sctx.fillRect(0, y0, x0, y1 - y0);
+  sctx.fillRect(x1, y0, W - x1, y1 - y0);
+
+  sctx.strokeStyle = 'rgba(55,226,213,0.9)';
+  sctx.lineWidth = Math.max(2, W / 400);
+  sctx.setLineDash([W / 60, W / 90]);
+  sctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+
+  sctx.setLineDash([]);
+  sctx.fillStyle = 'rgba(55,226,213,0.95)';
+  sctx.font = `600 ${Math.round(H * 0.018)}px system-ui, sans-serif`;
+  sctx.textAlign = 'left';
+  sctx.textBaseline = 'top';
+  sctx.fillText(`${zone.name} — keep it inside`, x0 + W * 0.012, y0 + H * 0.008);
+  sctx.restore();
+}
+
 function cssFilter(ov) {
   const parts = [];
   if (ov.brightness !== 100) parts.push(`brightness(${ov.brightness}%)`);
@@ -813,13 +876,57 @@ function onSegmentEnter(seg, clip, t) {
   if (clip.kind !== 'video') return;
 
   const ov = seg.ov || DEFAULT_OV;
-  const dur = clip.el.duration || 0;
-  const into = Math.max(0, t - seg.start);
-  const start = Math.min(ov.inPoint, Math.max(0, dur - 0.05));
-  clip.el.currentTime = dur ? start + (into % Math.max(0.05, dur - start)) : 0;
   if (clip.gain) clip.gain.gain.value = ov.volume;
+
+  // Offline rendering positions clips itself, frame by frame, and waits for the
+  // seek to land. Touching currentTime here would start a second seek that is
+  // still in flight when the frame is grabbed.
+  if (state.rendering) return;
+
+  clip.el.currentTime = videoTimeFor(seg, clip, t);
   if (state.playing) clip.el.play().catch(() => {});
   else clip.el.pause();
+}
+
+/** Where inside a clip the playhead sits for a given moment of the slot. */
+function videoTimeFor(seg, clip, t) {
+  const ov = seg.ov || DEFAULT_OV;
+  const dur = clip.el.duration || 0;
+  if (!dur) return 0;
+  const into = Math.max(0, t - seg.start);
+  const start = Math.min(ov.inPoint, Math.max(0, dur - 0.05));
+  return start + (into % Math.max(0.05, dur - start));
+}
+
+/** Park every video needed for time `t` on the right frame, and wait for it. */
+async function seekClipsFor(t, fps) {
+  const seg = segmentAt(t);
+  if (!seg) return;
+
+  const needed = [seg];
+  // Mid-transition the outgoing slot is on screen too, so it also has to be
+  // sitting on the correct frame.
+  const i = state.segments.indexOf(seg);
+  const td = Math.min(Number($('transLen').value) / 1000, (seg.end - seg.start) * 0.9);
+  if (i > 0 && resolveTransition(seg) !== 'cut' && t - seg.start < td) {
+    needed.push(state.segments[i - 1]);
+  }
+
+  const waits = [];
+  for (const s of needed) {
+    const clip = state.clips.find((c) => c.id === s.clipId);
+    if (!clip || clip.kind !== 'video') continue;
+    const target = videoTimeFor(s, clip, s === seg ? t : s.end - 0.001);
+    if (Math.abs(clip.el.currentTime - target) < 0.5 / fps) continue;
+
+    clip.el.currentTime = target;
+    waits.push(new Promise((res) => {
+      const done = () => res();
+      clip.el.addEventListener('seeked', done, { once: true });
+      setTimeout(done, 400); // never wedge the render on one bad seek
+    }));
+  }
+  if (waits.length) await Promise.all(waits);
 }
 
 /* ============================================================ waveform == */
@@ -1002,10 +1109,92 @@ let exportMime = '';
 
 let exportWatchdog = null;
 
+/** Offline render: no clock, every frame drawn and encoded deliberately. */
+async function startFastExport() {
+  const fps = 30;
+  state.rendering = true;
+  pause();
+  lastSegment = null;
+  const startedAt = performance.now();
+
+  try {
+    const blob = await renderFast({
+      canvas: stage,
+      fps,
+      tStart: state.tStart,
+      tEnd: state.tEnd,
+      audioBuffer: state.audio.buffer,
+      volume: Number($('volume').value),
+      drawAt: async (t) => {
+        await seekClipsFor(t, fps);
+        drawFrame(t);
+      },
+      onProgress: (p, label) => {
+        setExportProgress(p);
+        $('exportTitle').textContent = label || 'Rendering…';
+      },
+      shouldCancel: () => cancelRequested,
+    });
+
+    saveBlob(blob, 'mp4');
+    // Encoder throughput varies enormously between machines, so report what it
+    // actually managed rather than promising a figure.
+    const secs = (performance.now() - startedAt) / 1000;
+    const speed = editLength() / secs;
+    $('renderStatus').textContent =
+      `Rendered in ${secs.toFixed(1)}s · ${speed.toFixed(2)}× realtime`;
+    $('exportOverlay').hidden = true;
+  } finally {
+    state.rendering = false;
+    lastSegment = null;
+    state.cursor = state.tStart;
+    drawFrame(state.cursor);
+  }
+}
+
+function saveBlob(blob, ext) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `beatcut-${Date.now()}.${ext}`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
+}
+
+let cancelRequested = false;
+
 async function startExport() {
   if (!state.segments.length) return;
 
+  cancelRequested = false;
   showExportOverlay();
+
+  // Video-clip audio is played by the media elements, which an offline render
+  // has no way to capture - that case has to go through the realtime path.
+  const clipAudioOn = Number($('clipAudio').value) > 0;
+  const wantFast = $('exportMode').value !== 'realtime';
+
+  if (wantFast && fastExportSupported() && !clipAudioOn) {
+    $('exportHint').textContent =
+      'Rendering offline — every frame is drawn and encoded deliberately, so ' +
+      'nothing can be dropped. Speed depends on your encoder.';
+    try {
+      await startFastExport();
+      return;
+    } catch (err) {
+      if (err && err.name === 'Cancelled') {
+        $('exportOverlay').hidden = true;
+        return;
+      }
+      // Anything else: fall back rather than leaving them with nothing.
+      console.warn('[beatcut] fast export failed, falling back to realtime:', err);
+      $('exportHint').textContent =
+        `Fast export failed (${(err && err.message) || err}) — recording in realtime instead.`;
+    }
+  } else if (wantFast && clipAudioOn) {
+    $('exportHint').textContent =
+      'Clip audio is on, which only the realtime recorder can capture. Recording in realtime.';
+  }
+
   try {
     exportMime = MIME_CANDIDATES.find((m) => MediaRecorder.isTypeSupported(m)) || '';
     if (!exportMime) {
@@ -1068,6 +1257,8 @@ function showExportOverlay() {
   $('exportOverlay').hidden = false;
   $('exportTitle').textContent = 'Rendering…';
   $('exportHint').hidden = false;
+  $('exportHint').textContent =
+    'Recording happens in real time. Keep this tab visible and don\'t switch windows.';
   $('exportProgress').hidden = false;
   $('exportError').hidden = true;
   $('exportError').textContent = '';
@@ -1105,6 +1296,7 @@ function finishExport() {
 }
 
 function cancelExport() {
+  cancelRequested = true; // stops the offline render at its next frame
   state.exporting = false;
   clearTimeout(exportWatchdog);
   chunks = [];
@@ -1701,7 +1893,7 @@ for (const id of ['beatsPerCut', 'mode', 'bpm', 'sense', 'offset', 'maxClips',
   });
 }
 
-for (const id of ['effect', 'transition', 'transLen', 'intensity']) {
+for (const id of ['effect', 'transition', 'transLen', 'intensity', 'safeZone']) {
   $(id).addEventListener('input', () => {
     syncLabels();
     if (state.selected != null) syncInspector(); // refresh the "Use global (…)" text

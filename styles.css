@@ -48,7 +48,15 @@ body { display: flex; flex-direction: column; }
 }
 
 .readout { color: var(--dim); flex: 1; }
-.topbar-actions { display: flex; gap: 8px; }
+.topbar-actions { display: flex; gap: 8px; align-items: center; }
+.topbar-actions select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
 
 /* ------------------------------------------------------------- layout --- */
 

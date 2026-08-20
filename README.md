@@ -371,11 +371,42 @@ Every effect and transition can be overridden per slot in the inspector, where
 **Clip audio** — video clips are muted by default so you only hear the song. Set
 it to "quiet under music" if you want the original audio bleeding through.
 
-## Things worth knowing
+## Export modes
 
-- **Export runs in real time.** A 30-second edit takes 30 seconds to record.
-  Keep the tab visible and don't minimize the window while it renders — the
-  browser throttles background tabs and you'd get dropped frames.
+The dropdown next to **Export video** picks how the file is made.
+
+**Fast render** (default) renders offline with WebCodecs: every frame is drawn,
+encoded and muxed deliberately, with no clock attached. Nothing can be dropped,
+so the output is frame-exact, and it finishes faster than realtime.
+
+*How much faster depends entirely on your machine's H.264 encoder.* On the test
+machine here a 10-second edit rendered in 5.5s — **1.83× realtime**. A box with a
+good hardware encoder should do considerably better; one without will land near
+1×. The app reports the figure it actually achieved next to the Export button
+after each render, so you can see what yours does rather than take a promise.
+
+**Realtime capture** is the old path: it plays the edit back and records it, so a
+30-second edit takes 30 seconds and the tab must stay visible. It's the fallback
+when WebCodecs is unavailable, and it's used automatically when **Clip audio** is
+turned up, because audio coming out of the video elements can only be captured by
+recording. If a fast render fails for any reason it falls back to this rather
+than leaving you with nothing.
+
+## Safe zones
+
+**Safe zones** in the Look section dims the parts of the frame each app covers
+with its own UI — the Shorts title block, TikTok's caption and action rail,
+Reels' controls — and draws a dashed line round what survives.
+
+This is worth checking before you commit to a caption position: the default
+lower-third sits at 80% height, which is **underneath** the Shorts description
+and TikTok's caption. Either move captions up or keep the important part of the
+frame inside the dashed box.
+
+Pick a single platform, or **All platforms** for the strictest combination.
+The guides are drawn in the preview only and never reach the exported file.
+
+## Things worth knowing
 - Clips loop through your list in order. Fewer clips than cuts means they repeat;
   more clips than cuts means the extras go unused (raise "Stop after", or use
   a longer song).
@@ -414,6 +445,7 @@ cuts within about 10 ms of the true beat.
 | `js/analysis.js` | FFT, onset detection, tempo and beat tracking |
 | `js/captions.js` | Caption rendering, beat snapping, Whisper transcription |
 | `js/fonts.js` | Font pairings, webfont loading, licensing notes |
+| `js/export.js` | Offline WebCodecs renderer and MP4 muxing |
 | `js/app.js` | Timeline, preview renderer, effects, export |
 
 `window.beatcut` is exposed in the devtools console (`state`, `audioCtx`, `play`,

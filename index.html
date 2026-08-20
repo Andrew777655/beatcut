@@ -11,6 +11,11 @@
       <div class="brand">BeatCut</div>
       <div class="readout" id="readout">Load a song to start</div>
       <div class="topbar-actions">
+        <span id="renderStatus" class="hint"></span>
+        <select id="exportMode" title="How the file is produced">
+          <option value="fast" selected>Fast render</option>
+          <option value="realtime">Realtime capture</option>
+        </select>
         <button id="btnExport" class="primary" disabled>Export video</button>
       </div>
     </header>
@@ -266,6 +271,21 @@
         </label>
 
         <button id="btnRandomLook" class="ghost wide">Randomise per-clip effects</button>
+
+        <label class="field">
+          Safe zones <span class="scope">preview only</span>
+          <select id="safeZone">
+            <option value="" selected>Off</option>
+            <option value="all">All platforms (strictest)</option>
+            <option value="shorts">YouTube Shorts</option>
+            <option value="tiktok">TikTok</option>
+            <option value="reels">Instagram Reels</option>
+          </select>
+        </label>
+        <p class="hint">
+          Shows where each app's own buttons and captions sit on top of your
+          video. Guides are never exported.
+        </p>
 
         <label class="field">
           Clip audio
