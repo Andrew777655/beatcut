@@ -1,5 +1,6 @@
 import { analyze, buildGrid, pickOnsets } from './analysis.js';
 import { drawCaptions, captionAt, distribute, snapToBeat, transcribe } from './captions.js';
+import { PAIRINGS, pairingById, loadPairing, fontString } from './fonts.js';
 
 /* ================================================================ state == */
 
@@ -1295,16 +1296,42 @@ const fmtMs = (s) => {
 /* =========================================================== captions == */
 
 function captionStyle() {
+  const pairing = pairingById($('capFont').value);
+  const swap = $('capSwap').checked;
+  const mainSlot = swap ? 'accent' : 'main';
+  const accentSlot = swap ? 'main' : 'accent';
+
   return {
     size: Number($('capSize').value),
     position: $('capPos').value,
     outline: Number($('capOutline').value),
     color: $('capColor').value,
+    accentColor: $('capAccentColor').value,
     outlineColor: $('capOutlineColor').value,
     uppercase: $('capUpper').checked,
     pop: $('capPop').checked,
     box: $('capBox').checked,
+    reveal: $('capReveal').value,
+    pattern: $('capPattern').value,
+    accentRate: Number($('capAccent').value) / 100,
+    // Passed as functions so the renderer can size each word independently.
+    mainFont: (px) => fontString(pairing, mainSlot, px),
+    accentFont: (px) => fontString(pairing, accentSlot, px),
   };
+}
+
+async function applyPairing() {
+  const pairing = pairingById($('capFont').value);
+  const subs = ['main', 'accent']
+    .map((s) => pairing[s])
+    .filter((f) => f.substitute)
+    .map((f) => `${f.name} → ${f.substitute}`);
+  $('capFontNote').textContent = subs.length
+    ? `Substituted (original is a paid licence): ${subs.join(', ')}`
+    : 'Both faces are the real thing.';
+
+  await loadPairing(pairing);
+  if (!state.playing) drawFrame(state.cursor);
 }
 
 /** Spread the typed lines across the beat grid. */
@@ -1522,6 +1549,7 @@ function syncLabels() {
   $('transLenVal').textContent = `${$('transLen').value} ms`;
   $('minGapVal').textContent = `${Number($('minGap').value).toFixed(2)}s`;
   $('trimStartVal').textContent = fmtMs(Number($('trimStart').value));
+  $('capAccentVal').textContent = `${$('capAccent').value}%`;
   $('capSizeVal').textContent = `${Number($('capSize').value).toFixed(1)}%`;
   $('capOutlineVal').textContent = `${$('capOutline').value}%`;
 }
@@ -1701,7 +1729,14 @@ $('capTiming').addEventListener('input', () => {
   $('capWordsField').hidden = $('capTiming').value !== 'word';
 });
 
+$('capFont').addEventListener('change', applyPairing);
+$('capReveal').addEventListener('input', () => {
+  $('capPatternField').hidden = $('capReveal').value !== 'stack';
+  if (!state.playing) drawFrame(state.cursor);
+});
+
 for (const id of ['capOn', 'capSize', 'capPos', 'capOutline', 'capColor',
+                  'capAccentColor', 'capSwap', 'capPattern', 'capAccent',
                   'capOutlineColor', 'capUpper', 'capPop', 'capBox']) {
   $(id).addEventListener('input', () => {
     syncLabels();
@@ -1783,6 +1818,11 @@ window.beatcut = {
   state, audioCtx, play, pause, rebuild, startExport, selectSlot, drawFrame,
   EFFECTS, TRANSITIONS,
 };
+
+$('capFont').innerHTML = PAIRINGS
+  .map((p) => `<option value="${p.id}">${p.label}</option>`)
+  .join('');
+applyPairing();
 
 fillSelect($('effect'), EFFECTS);
 fillSelect($('transition'), TRANSITIONS);

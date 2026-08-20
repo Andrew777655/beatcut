@@ -373,6 +373,43 @@
         <h2>6 · Caption style</h2>
 
         <label class="field">
+          Font pairing
+          <select id="capFont"></select>
+        </label>
+        <div class="hint" id="capFontNote"></div>
+
+        <label class="checkline">
+          <input type="checkbox" id="capSwap" /> Swap main / accent
+        </label>
+
+        <label class="field">
+          Word reveal
+          <select id="capReveal">
+            <option value="all" selected>Whole line at once</option>
+            <option value="word">One word at a time</option>
+            <option value="stack">Stacked build — words pile up</option>
+          </select>
+        </label>
+
+        <label class="field" id="capPatternField" hidden>
+          Stack pattern
+          <select id="capPattern">
+            <option value="1213" selected>1 · 2 · 1 · 3</option>
+            <option value="pairs">Pairs</option>
+            <option value="random">Random</option>
+          </select>
+        </label>
+
+        <label class="field">
+          Accent words <span class="val" id="capAccentVal">15%</span>
+          <input type="range" id="capAccent" min="0" max="60" step="5" value="15" />
+        </label>
+        <p class="hint">
+          The accent face lands on that share of the longer words. Wrap a word in
+          *asterisks* in the box above to force it.
+        </p>
+
+        <label class="field">
           Size <span class="val" id="capSizeVal">6.5%</span>
           <input type="range" id="capSize" min="2" max="14" step="0.1" value="6.5" />
         </label>
@@ -393,6 +430,7 @@
 
         <div class="row">
           <label class="field">Text <input type="color" id="capColor" value="#ffffff" /></label>
+          <label class="field">Accent <input type="color" id="capAccentColor" value="#ffd166" /></label>
           <label class="field">Outline <input type="color" id="capOutlineColor" value="#000000" /></label>
         </div>
 

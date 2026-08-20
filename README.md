@@ -70,9 +70,63 @@ is parked somewhere, placement starts from the nearest beat to it, so you can
 drop a chorus in partway through. Each line then shows up in the list below with
 its timecode — click the time to jump there, edit the text inline, ✕ to remove.
 
-**Caption style** covers size, lower/centre/upper third, outline weight, text and
-outline colour, uppercase, a dark backing box, and a pop-in on the beat. The
-default is the usual look: heavy white text, thick black outline, lower third.
+**Caption style** covers size, lower/centre/upper third, outline weight, colours,
+uppercase, a dark backing box, and a pop-in on the beat. The default is the usual
+look: heavy white text, thick black outline, lower third.
+
+### Fonts
+
+Six pairings, each a heavy **main** face plus a softer **accent** face:
+
+| Pairing | Main | Accent |
+| --- | --- | --- |
+| Tempting + Switzer | Switzer | Tempting |
+| Athelas + Vanguard | Vanguard | Athelas |
+| Inter + Times New Roman | Inter | Times New Roman |
+| Arial Bold + Epic Pro | Arial Bold | Epic Pro |
+| Shadow Light + BALBOA | BALBOA | Shadow Light |
+| Archivo + Stix | Archivo | STIX Two Text |
+
+**Swap main / accent** flips which face is the heavy one, since which reads as
+"main" is a matter of taste.
+
+**A licensing note.** Switzer, Inter, Archivo, STIX Two Text, Arial and Times New
+Roman load legitimately — free, Google-hosted, or already on your system.
+Tempting, Vanguard, Athelas, Epic Pro, Shadow Light and BALBOA are commercial
+retail fonts that can't be redistributed, so those slots use free faces picked to
+sit in the same visual territory (Yellowtail, Anton, Lora, Great Vibes, Oswald,
+Parisienne). The panel names every substitution rather than pretending.
+
+If you own a licence for the real thing, drop the `.woff2` into a `fonts/` folder
+and add a `local: { family, url, weight }` entry to that slot in
+[`js/fonts.js`](js/fonts.js) — it is preferred over the substitute automatically
+and the "substituted" note disappears.
+
+### Word reveal
+
+*Whole line at once* is the plain subtitle behaviour.
+
+*One word at a time* shows only the word currently being sung, alone and large.
+
+*Stacked build* is the TikTok look: words pile up one under another as they're
+sung, in rows of **1 · 2 · 1 · 3**, **Pairs**, or **Random**. The layout for the
+whole line is computed up front and words simply become visible as they arrive,
+so nothing jumps around while it fills.
+
+The last two need per-word timing to look right, which is what auto-transcribe's
+*Per word* mode produces. Typed captions get word times spread evenly across the
+line instead — still fine, just not locked to the vocal.
+
+### Accent words
+
+**Accent words** sets what share of the longer words get the accent face — it
+skips short words and common ones like "the" and "and", so it lands on words with
+some weight to them. The choice is stable, not re-rolled every frame.
+
+To force a specific word, wrap it in asterisks in the caption box: `*this*`. The
+asterisks are stripped before drawing. Accent words also keep their original
+capitalisation when UPPERCASE is on, since a cursive face reads badly in caps,
+and can take their own colour.
 
 ### Auto-transcribe
 
@@ -339,6 +393,7 @@ cuts within about 10 ms of the true beat.
 | `styles.css` | Styling |
 | `js/analysis.js` | FFT, onset detection, tempo and beat tracking |
 | `js/captions.js` | Caption rendering, beat snapping, Whisper transcription |
+| `js/fonts.js` | Font pairings, webfont loading, licensing notes |
 | `js/app.js` | Timeline, preview renderer, effects, export |
 
 `window.beatcut` is exposed in the devtools console (`state`, `audioCtx`, `play`,

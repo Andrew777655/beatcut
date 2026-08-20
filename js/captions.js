@@ -37,6 +37,78 @@ export function captionAt(captions, t) {
   return captions.find((c) => t >= c.start && t < c.end) || null;
 }
 
+/* --------------------------------------------------------- word model --- */
+
+/** Stable 0..1 from a string - so "random" choices don't flicker per frame. */
+function hash01(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) / 4294967296;
+}
+
+const STOPWORDS = new Set(
+  ('a an the and or but if so of to in on at by for with from as is am are was were be been ' +
+   'it its i me my you your he she they we us them this that these those do did done get got ' +
+   'not no yes up out off over just like all can will would could should').split(' ')
+);
+
+/**
+ * Words for a caption, each with its own time.
+ *
+ * Real word timestamps are used when Whisper supplied them. If the text has
+ * since been edited the counts stop matching, so times are re-spread evenly -
+ * better than showing stale timings against the wrong words.
+ */
+export function wordsOf(cap) {
+  const parts = cap.text.split(/\s+/).filter(Boolean);
+  if (!parts.length) return [];
+
+  const src = cap.words && cap.words.length === parts.length ? cap.words : null;
+  const span = Math.max(0.001, cap.end - cap.start);
+
+  return parts.map((raw, i) => {
+    // *asterisks* force the accent face on a word.
+    const forced = /^\*.+\*$/.test(raw);
+    const text = forced ? raw.slice(1, -1) : raw;
+    return {
+      text,
+      forced,
+      start: src ? src[i].start : cap.start + (span * i) / parts.length,
+      end: src ? src[i].end : cap.start + (span * (i + 1)) / parts.length,
+    };
+  });
+}
+
+/** Should this word use the accent face? */
+function isAccent(word, capId, i, rate) {
+  if (word.forced) return true;
+  if (rate <= 0) return false;
+  const clean = word.text.toLowerCase().replace(/[^a-z']/g, '');
+  if (clean.length < 4 || STOPWORDS.has(clean)) return false;
+  return hash01(`${capId}:${i}:${clean}`) < rate;
+}
+
+/** Row sizes for the stacked build, e.g. 1-2-1-3 down the frame. */
+function rowPattern(kind, count, seed) {
+  const rows = [];
+  let left = count;
+  let i = 0;
+  const cycle = kind === 'pairs' ? [2] : [1, 2, 1, 3];
+  while (left > 0) {
+    let n;
+    if (kind === 'random') n = 1 + Math.floor(hash01(`${seed}:${i}`) * 3);
+    else n = cycle[i % cycle.length];
+    n = Math.min(n, left);
+    rows.push(n);
+    left -= n;
+    i++;
+  }
+  return rows;
+}
+
 /**
  * Paint the active caption. Called from the same draw path as the clips, so
  * whatever appears in the preview is what lands in the exported file.
@@ -46,62 +118,135 @@ export function drawCaptions(ctx, captions, t, W, H, style) {
   if (!cap || !cap.text.trim()) return;
 
   const fontPx = Math.max(12, Math.round((H * style.size) / 100));
-  const text = style.uppercase ? cap.text.toUpperCase() : cap.text;
+  const maxWidth = W * 0.86;
+  const reveal = style.reveal || 'all';
+
+  // Each word carries its own face and its own moment.
+  let words = wordsOf(cap).map((w, i) => ({
+    ...w,
+    accent: isAccent(w, cap.id, i, style.accentRate || 0),
+  }));
+  if (!words.length) return;
+
+  if (reveal === 'word') {
+    // One at a time: the word being sung, or the last one that started.
+    let active = null;
+    for (const w of words) if (t >= w.start) active = w;
+    if (!active) active = words[0];
+    words = [active];
+  }
+
+  const faceOf = (w) => (w.accent ? style.accentFont : style.mainFont);
+  const label = (w) =>
+    style.uppercase && !w.accent ? w.text.toUpperCase() : w.text;
 
   ctx.save();
   ctx.filter = 'none';
   ctx.globalAlpha = 1;
-  ctx.font = `900 ${fontPx}px "Segoe UI", Inter, system-ui, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.miterLimit = 2;
 
-  const lines = wrapLines(ctx, text, W * 0.86);
-  const lineH = fontPx * 1.16;
-  const block = lines.length * lineH;
+  const measure = (w, px) => {
+    ctx.font = faceOf(w)(px);
+    return ctx.measureText(label(w)).width;
+  };
 
-  // Vertical anchor. Bottom sits above the phone UI, not flush to the edge.
+  // ---- rows -------------------------------------------------------------
+  let rows;
+  if (reveal === 'stack') {
+    const sizes = rowPattern(style.pattern || '1213', words.length, cap.id);
+    rows = [];
+    let k = 0;
+    for (const n of sizes) rows.push(words.slice(k, (k += n)));
+  } else if (reveal === 'word') {
+    rows = [words];
+  } else {
+    // Greedy wrap to the frame width.
+    rows = [];
+    let cur = [];
+    let curW = 0;
+    const spaceW = fontPx * 0.28;
+    for (const w of words) {
+      const ww = measure(w, fontPx);
+      if (cur.length && curW + spaceW + ww > maxWidth) {
+        rows.push(cur);
+        cur = [];
+        curW = 0;
+      }
+      curW += (cur.length ? spaceW : 0) + ww;
+      cur.push(w);
+    }
+    if (cur.length) rows.push(cur);
+  }
+
+  // Per-row scale so a long row never runs off the frame.
+  const spaceW = fontPx * 0.28;
+  const laidOut = rows.map((row) => {
+    const widths = row.map((w) => measure(w, fontPx));
+    const total = widths.reduce((a, b) => a + b, 0) + spaceW * (row.length - 1);
+    const fit = total > maxWidth ? maxWidth / total : 1;
+    return { row, widths, total, fit };
+  });
+
+  const lineH = fontPx * 1.18;
+  const block = laidOut.length * lineH;
   const anchor =
     style.position === 'top' ? H * 0.16 :
     style.position === 'middle' ? H * 0.5 :
     H * 0.80;
-  const cy = anchor - block / 2 + lineH / 2;
+  const top = anchor - block / 2 + lineH / 2;
 
-  // A short pop keeps the line feeling like it landed on the beat.
-  const age = t - cap.start;
-  const p = style.pop ? Math.min(1, age / 0.13) : 1;
-  const scale = 0.86 + 0.14 * (p * p * (3 - 2 * p));
-
-  ctx.translate(W / 2, anchor);
-  ctx.scale(scale, scale);
-  ctx.translate(-W / 2, -anchor);
+  // Whole-caption pop on entry (skipped per-word modes, which pop individually).
+  if (style.pop && reveal === 'all') {
+    const p = Math.min(1, (t - cap.start) / 0.13);
+    const s = 0.86 + 0.14 * (p * p * (3 - 2 * p));
+    ctx.translate(W / 2, anchor);
+    ctx.scale(s, s);
+    ctx.translate(-W / 2, -anchor);
+  }
 
   if (style.box) {
-    let widest = 0;
-    for (const l of lines) widest = Math.max(widest, ctx.measureText(l).width);
+    const widest = Math.max(...laidOut.map((r) => Math.min(r.total, maxWidth)));
     const padX = fontPx * 0.45;
     const padY = fontPx * 0.3;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    roundRect(
-      ctx,
-      W / 2 - widest / 2 - padX,
-      cy - lineH / 2 - padY,
-      widest + padX * 2,
-      block + padY * 2,
-      fontPx * 0.22
-    );
+    roundRect(ctx, W / 2 - widest / 2 - padX, top - lineH / 2 - padY,
+      widest + padX * 2, block + padY * 2, fontPx * 0.22);
     ctx.fill();
   }
 
-  ctx.lineJoin = 'round';
-  ctx.miterLimit = 2;
-  ctx.lineWidth = fontPx * (style.outline / 100);
-  ctx.strokeStyle = style.outlineColor;
-  ctx.fillStyle = style.color;
+  // ---- draw -------------------------------------------------------------
+  laidOut.forEach(({ row, widths, total, fit }, r) => {
+    const y = top + r * lineH;
+    let x = W / 2 - (total * fit) / 2;
 
-  lines.forEach((line, i) => {
-    const y = cy + i * lineH;
-    if (ctx.lineWidth > 0) ctx.strokeText(line, W / 2, y);
-    ctx.fillText(line, W / 2, y);
+    row.forEach((w, i) => {
+      const wpx = widths[i] * fit;
+      // In stacked mode a word is invisible until it is sung; the layout is
+      // computed for the whole line regardless, so nothing shifts as it fills.
+      const visible = reveal === 'stack' ? t >= w.start : true;
+      if (visible) {
+        const px = fontPx * fit;
+        let scale = 1;
+        if (style.pop && reveal !== 'all') {
+          const p = Math.min(1, Math.max(0, (t - w.start) / 0.13));
+          scale = 0.7 + 0.3 * (p * p * (3 - 2 * p));
+        }
+        ctx.save();
+        ctx.translate(x + wpx / 2, y);
+        if (scale !== 1) ctx.scale(scale, scale);
+        ctx.font = faceOf(w)(px);
+        ctx.lineWidth = px * (style.outline / 100);
+        ctx.strokeStyle = style.outlineColor;
+        ctx.fillStyle = w.accent && style.accentColor ? style.accentColor : style.color;
+        if (ctx.lineWidth > 0) ctx.strokeText(label(w), 0, 0);
+        ctx.fillText(label(w), 0, 0);
+        ctx.restore();
+      }
+      x += wpx + spaceW * fit;
+    });
   });
 
   ctx.restore();
@@ -359,6 +504,8 @@ export function groupWords(words, perLine, maxGap = 0.7) {
     text: ws.map((w) => w.text).join(' '),
     start: ws[0].start,
     end: ws[ws.length - 1].end,
+    // Kept so the reveal styles can show each word as it is actually sung.
+    words: ws.map((w) => ({ start: w.start, end: w.end })),
   }));
 
   // Keep the list strictly ordered and non-overlapping: a caption whose end
