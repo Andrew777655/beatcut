@@ -675,6 +675,18 @@ export async function transcribe(audioBuffer, opts, onStatus) {
     : { data: downmix(window), sampleRate: window.sampleRate };
   const audio = resampleTo16k(source.data, source.sampleRate);
 
+  // Measure what the model is actually being handed. Nearly every "it found
+  // nothing" turns out to be the wrong slice of audio or a near-silent signal,
+  // and without this there is no way to tell that from a genuine miss.
+  let peak = 0;
+  let sumSq = 0;
+  for (let i = 0; i < audio.length; i++) {
+    const v = Math.abs(audio[i]);
+    if (v > peak) peak = v;
+    sumSq += audio[i] * audio[i];
+  }
+  const rms = audio.length ? Math.sqrt(sumSq / audio.length) : 0;
+
   onStatus({ phase: 'run', message: 'Listening to the vocal…' });
 
   const genOpts = {
@@ -743,6 +755,19 @@ export async function transcribe(audioBuffer, opts, onStatus) {
     wordTiming: usedWordTiming,
     analysedFrom: offset,
     analysedSeconds: window.duration != null ? window.duration : audioBuffer.duration,
+    diagnostics: {
+      model: model.repo,
+      device,
+      isolated: isolate,
+      language: language || 'auto',
+      windowFrom: offset,
+      windowSeconds: window.duration != null ? window.duration : audioBuffer.duration,
+      samples: audio.length,
+      peak: +peak.toFixed(4),
+      rms: +rms.toFixed(5),
+      rawChunks: chunks.length,
+      rawText: chunks.map((c) => (c.text || '').trim()).join(' ').slice(0, 400),
+    },
   };
 }
 

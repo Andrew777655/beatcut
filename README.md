@@ -244,6 +244,27 @@ rendered at all, so whole stretches simply never appeared. Missing ends are now
 inferred from the following word, and lines are forced into a strictly ordered,
 non-overlapping sequence before they are used.
 
+### When it finds nothing at all
+
+The commonest cause is not the model — it's that **only the trimmed window is
+transcribed**. If your edit covers 0:20–0:35 and the vocal starts at 0:40, Whisper
+never hears a word of it. Tick **Listen to the whole song** to take the trim out
+of the equation.
+
+The status line now names the window it analysed and the peak level it saw, so an
+empty result tells you which problem you have:
+
+- *"That stretch of audio is almost silent (peak 0.003)"* — wrong window, or the
+  song's intro. Move the Start/End markers or use the whole song.
+- *"No clear vocal found in 0:20 → 0:35 … The model returned nothing at all"* —
+  it heard audio but no speech. Try a bigger model or an explicit Language.
+- *"…returned N pieces but none survived filtering"* — it produced only markers
+  and non-speech tags.
+
+Every run also logs the full detail to the browser console (`[beatcut]
+transcription:`) — model, device, window, sample count, peak, RMS, and the raw
+text before any filtering. If it's still wrong, that line says why.
+
 If a track comes back empty or heavily filtered, the audio genuinely had no
 intelligible vocal for the model. Worth trying in order: a bigger model, an
 explicit Language, and toggling *Strip the backing track first* — isolation

@@ -1924,23 +1924,40 @@ async function runTranscribe() {
         wordTiming: $('capTiming').value === 'word',
         wordsPerLine: Number($('capWords').value),
         processing: $('capProc').value,
-        // Only the trimmed window - no point transcribing three minutes of a
-        // song for a fifteen second edit.
-        startSec: state.tStart,
-        endSec: state.tEnd || state.audio.buffer.duration,
+        // Normally only the trimmed window - no point transcribing three
+        // minutes of a song for a fifteen second edit - but that also means a
+        // vocal outside the window is invisible, so it can be overridden.
+        startSec: $('capWhole').checked ? 0 : state.tStart,
+        endSec: $('capWhole').checked
+          ? state.audio.buffer.duration
+          : (state.tEnd || state.audio.buffer.duration),
       },
       (s) => { status.textContent = s.message; }
     );
 
-    const { captions: cleaned, dropped, looped, wordTiming, analysedSeconds } = result;
+    const { captions: cleaned, dropped, looped, wordTiming, analysedSeconds, diagnostics: d } =
+      result;
+
+    // Always log the full picture: "it found nothing" is nearly always the wrong
+    // slice of audio or a near-silent signal, and the numbers say which.
+    console.info('[beatcut] transcription:', d);
 
     if (!cleaned.length) {
-      const advice = $('capIsolate').checked
-        ? ' Try a bigger model, or turn off "Strip the backing track first".'
-        : ' Try a bigger model, or set the Language explicitly.';
-      status.textContent = looped
-        ? `The model looped instead of finding words.${advice}`
-        : `No clear vocal found — the track read as music.${advice}`;
+      const where = `${fmtMs(d.windowFrom)} → ${fmtMs(d.windowFrom + d.windowSeconds)}`;
+      const quiet = d.peak < 0.02;
+      const heard = d.rawChunks
+        ? `The model returned ${d.rawChunks} pieces but none survived filtering.`
+        : 'The model returned nothing at all.';
+
+      status.textContent = quiet
+        ? `That stretch of audio is almost silent (peak ${d.peak}). ` +
+          `Check the Start and End markers — only ${where} was analysed.`
+        : looped
+          ? `The model looped instead of finding words. ${heard} ` +
+            'Try a bigger model, or set the Language explicitly.'
+          : `No clear vocal found in ${where} ` +
+            `(${Math.round(d.windowSeconds)}s, peak ${d.peak}). ${heard} ` +
+            'Try "Listen to the whole song", a bigger model, or an explicit Language.';
       return;
     }
 
