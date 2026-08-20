@@ -1,6 +1,6 @@
 import { analyze, buildGrid, pickOnsets } from './analysis.js';
 import {
-  drawCaptions, captionAt, distribute, snapToBeat, transcribe, wordsOf,
+  drawCaptions, captionAt, captionBounds, distribute, snapToBeat, transcribe, wordsOf,
 } from './captions.js';
 import { FONTS, fontById, fontOptions, loadFont, fontString } from './fonts.js';
 import { renderFast, fastExportSupported } from './export.js';
@@ -19,6 +19,10 @@ const state = {
   segments: [],         // {start, end, clipId, ov}
   captions: [],         // {id, text, start, end} in timeline seconds
   rendering: false,     // offline WebCodecs render in progress
+  // Hand edits layered on top of whatever the beat source produces.
+  killed: [],           // cut times the user erased
+  extra: [],            // cut times the user added
+  beatTool: null,       // 'erase' | 'add' | null
   overrides: {},        // slot index -> per-slot edits, see DEFAULT_OV
   selected: null,       // index of the slot open in the inspector
   selectedCaption: null, // index of the caption open in the Line tab
@@ -412,19 +416,36 @@ function syncModeFields() {
   }
 }
 
+const KILL_TOL = 0.06; // how close a cut must be to count as the erased one
+
+/** Apply the hand edits over whatever the beat source generated. */
+function applyBeatEdits(cuts) {
+  let out = cuts;
+  if (state.killed.length) {
+    out = out.filter((t) => !state.killed.some((k) => Math.abs(k - t) < KILL_TOL));
+  }
+  if (state.extra.length) {
+    out = out.concat(state.extra.filter((t) => !out.some((c) => Math.abs(c - t) < KILL_TOL)));
+    out.sort((a, b) => a - b);
+  }
+  return out;
+}
+
 function cutTimes() {
   const a = state.analysis;
   if (!a) return [];
   const mode = $('mode').value;
   const minGap = Number($('minGap').value);
 
-  if (mode === 'onsets') return drumHits();
-  if (mode === 'words') return wordCutTimes();
-
-  const cuts = gridCuts(beatTimes(), Number($('beatsPerCut').value));
-  if (mode === 'hybrid') return mergeCuts(cuts, drumHits(), minGap);
-  if (mode === 'gridwords') return mergeCuts(cuts, wordCutTimes(), minGap);
-  return cuts;
+  let cuts;
+  if (mode === 'onsets') cuts = drumHits();
+  else if (mode === 'words') cuts = wordCutTimes();
+  else {
+    cuts = gridCuts(beatTimes(), Number($('beatsPerCut').value));
+    if (mode === 'hybrid') cuts = mergeCuts(cuts, drumHits(), minGap);
+    else if (mode === 'gridwords') cuts = mergeCuts(cuts, wordCutTimes(), minGap);
+  }
+  return applyBeatEdits(cuts);
 }
 
 function rebuild() {
@@ -1544,8 +1565,18 @@ function syncInspector() {
   $('inspVolField').hidden = !isVideo;
   $('inspTrimField').hidden = !isVideo;
   if (isVideo) {
-    $('inspTrim').max = Math.max(0.1, clip.duration - 0.1).toFixed(1);
-    $('inspTrim').value = Math.min(ov.inPoint, clip.duration);
+    // The window is as long as the slot, so the slider can only travel as far
+    // as leaves a full slot's worth of footage behind it.
+    const slotLen = seg.end - seg.start;
+    const room = Math.max(0, clip.duration - slotLen);
+    $('inspTrim').max = room.toFixed(2);
+    const at = Math.min(ov.inPoint, room);
+    $('inspTrim').value = at;
+    $('inspTrimVal').textContent = `${at.toFixed(2)}s`;
+    $('inspTrimNote').textContent = room < 0.05
+      ? `This clip is ${clip.duration.toFixed(1)}s and the slot needs ` +
+        `${slotLen.toFixed(2)}s — there is nothing spare to slide, so it loops.`
+      : `Showing ${fmtMs(at)} → ${fmtMs(at + slotLen)} of ${fmtMs(clip.duration)}`;
   }
 
   // Spell out what "Use global" currently resolves to, so it is obvious whether
@@ -1600,6 +1631,17 @@ function applyInspector() {
   syncInspectorLabels();
 
   const seg = state.segments[i];
+  // Keep the frame-window readout live while the slider is being dragged;
+  // syncInspector deliberately isn't called here, as it would fight the drag.
+  const clipNow = state.clips.find((c) => c.id === seg.clipId);
+  if (clipNow && clipNow.kind === 'video') {
+    const slotLen = seg.end - seg.start;
+    $('inspTrimNote').textContent = clipNow.duration - slotLen < 0.05
+      ? `This clip is ${clipNow.duration.toFixed(1)}s and the slot needs ` +
+        `${slotLen.toFixed(2)}s — there is nothing spare to slide, so it loops.`
+      : `Showing ${fmtMs(ov.inPoint)} → ${fmtMs(ov.inPoint + slotLen)} of ` +
+        `${fmtMs(clipNow.duration)}`;
+  }
   seg.ov = ov; // the slot may have been built before this override existed
   if (ov.clipId != null) seg.clipId = ov.clipId;
   else {
@@ -1640,6 +1682,9 @@ function captionStyle(cap) {
     size: pick('size', Number($('capSize').value)),
     position: pick('position', $('capPos').value),
     offset: pick('offset', 0),
+    // Undefined unless the line was dragged, in which case it wins over position.
+    x: o.x,
+    y: o.y,
     outline: outlineOn ? pick('outline', Number($('capOutline').value)) : 0,
     color: pick('color', $('capColor').value),
     accentColor: pick('accentColor', $('capAccentColor').value),
@@ -1818,6 +1863,12 @@ function syncLineInspector() {
 
   // A one-word line has nothing to reveal progressively.
   $('lnRevealField').hidden = wordsOf(cap).length < 2;
+
+  const placed = own.x != null || own.y != null;
+  $('lnPosNote').textContent = placed
+    ? `Placed by hand at ${Math.round((own.x ?? 0.5) * 100)}% / ` +
+      `${Math.round((own.y ?? 0.8) * 100)}% — Recentre puts it back.`
+    : 'Drag the caption in the preview to place it anywhere.';
   $('lnSize').value = s.size;
   $('lnPos').value = s.position;
   $('lnOffset').value = s.offset;
@@ -1844,8 +1895,13 @@ function applyLineInspector() {
   if (!$('lnOverride').checked) {
     delete cap.style;
   } else {
+    // A dragged position is not one of the controls, so carry it across the
+    // rebuild - otherwise touching any slider would snap the caption back.
+    const { x, y } = cap.style || {};
     cap.style = {};
     for (const [key, id, read] of LINE_FIELDS) cap.style[key] = read($(id));
+    if (x != null) cap.style.x = x;
+    if (y != null) cap.style.y = y;
   }
   syncLineLabels();
   renderCapLane();
@@ -2050,6 +2106,65 @@ $('btnClear').addEventListener('click', () => {
   rebuild();
 });
 
+/* ------------------------------------------------ dragging the caption -- */
+
+/** Pointer position in canvas pixels, which are not CSS pixels. */
+function canvasPoint(e) {
+  const r = stage.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * (stage.width / r.width),
+    y: (e.clientY - r.top) * (stage.height / r.height),
+  };
+}
+
+function overCaption(p) {
+  const b = captionBounds();
+  if (!b) return false;
+  const pad = stage.width * 0.03; // a little grace either side of the glyphs
+  return p.x >= b.x - pad && p.x <= b.x + b.w + pad &&
+         p.y >= b.y - pad && p.y <= b.y + b.h + pad;
+}
+
+let capDrag = null;
+
+stage.addEventListener('pointerdown', (e) => {
+  if (!$('capOn').checked || !state.captions.length) return;
+  const cap = captionAt(state.captions, state.cursor);
+  const b = captionBounds();
+  if (!cap || !b) return;
+  const p = canvasPoint(e);
+  if (!overCaption(p)) return;
+
+  // Grab the caption itself, not the one under the playhead a second later.
+  capDrag = { cap, dx: p.x - b.centerX, dy: p.y - b.centerY };
+  stage.setPointerCapture(e.pointerId);
+  stage.style.cursor = 'grabbing';
+  e.preventDefault();
+});
+
+stage.addEventListener('pointermove', (e) => {
+  const p = canvasPoint(e);
+  if (!capDrag) {
+    stage.style.cursor = overCaption(p) ? 'grab' : 'default';
+    return;
+  }
+  const cap = capDrag.cap;
+  if (!cap.style) cap.style = {};
+  cap.style.x = clamp((p.x - capDrag.dx) / stage.width, 0.04, 0.96);
+  cap.style.y = clamp((p.y - capDrag.dy) / stage.height, 0.04, 0.96);
+  drawFrame(state.cursor);
+});
+
+for (const ev of ['pointerup', 'pointercancel']) {
+  stage.addEventListener(ev, () => {
+    if (!capDrag) return;
+    capDrag = null;
+    stage.style.cursor = 'grab';
+    renderCapLane();
+    syncLineInspector();
+  });
+}
+
 function toggleFullscreen() {
   const wrap = document.querySelector('.canvas-wrap');
   if (document.fullscreenElement) document.exitFullscreen();
@@ -2152,6 +2267,14 @@ for (const id of ['inspClip', 'inspEffect', 'inspTransition', 'inspVol', 'inspTr
   $(id).addEventListener('input', applyInspector);
 }
 
+for (const [btn, step] of [['inspTrimBack', -0.25], ['inspTrimFwd', 0.25]]) {
+  $(btn).addEventListener('click', () => {
+    const el = $('inspTrim');
+    el.value = clamp(Number(el.value) + step, 0, Number(el.max));
+    applyInspector();
+  });
+}
+
 $('inspClose').addEventListener('click', () => {
   state.selected = null;
   [...$('timeline').children].forEach((el) => el.classList && el.classList.remove('selected'));
@@ -2219,6 +2342,15 @@ $('lnOverride').addEventListener('input', () => {
   $('lnFields').hidden = !$('lnOverride').checked;
   applyLineInspector();
 });
+$('lnFreePos').addEventListener('click', () => {
+  const cap = state.captions[state.selectedCaption];
+  if (!cap || !cap.style) return;
+  delete cap.style.x;
+  delete cap.style.y;
+  syncLineInspector();
+  if (!state.playing) drawFrame(state.cursor);
+});
+
 $('lnReset').addEventListener('click', () => {
   $('lnOverride').checked = false;
   $('lnFields').hidden = true;
@@ -2287,10 +2419,60 @@ $('aspect').addEventListener('change', setAspect);
 $('volume').addEventListener('input', (e) => (master.gain.value = Number(e.target.value)));
 $('clipAudio').addEventListener('change', (e) => (clipBus.gain.value = Number(e.target.value)));
 
+function setBeatTool(tool) {
+  state.beatTool = state.beatTool === tool ? null : tool;
+  $('toolErase').classList.toggle('is-on', state.beatTool === 'erase');
+  $('toolAdd').classList.toggle('is-on', state.beatTool === 'add');
+  wave.classList.toggle('arm-erase', state.beatTool === 'erase');
+  wave.classList.toggle('arm-add', state.beatTool === 'add');
+  $('tlHint').textContent =
+    state.beatTool === 'erase' ? 'Click a cut line on the waveform to remove it' :
+    state.beatTool === 'add' ? 'Click the waveform to add a cut there' :
+    'Click a clip or a caption to edit it on its own';
+}
+
+$('toolErase').addEventListener('click', () => setBeatTool('erase'));
+$('toolAdd').addEventListener('click', () => setBeatTool('add'));
+$('toolReset').addEventListener('click', () => {
+  state.killed = [];
+  state.extra = [];
+  lastSegment = null;
+  rebuild();
+});
+
 wave.addEventListener('click', (e) => {
   if (!state.audio) return;
   const rect = wave.getBoundingClientRect();
-  const t = ((e.clientX - rect.left) / rect.width) * state.audio.buffer.duration;
+  const at = ((e.clientX - rect.left) / rect.width) * state.audio.buffer.duration;
+
+  if (state.beatTool === 'erase') {
+    // Nearest existing cut wins, so you can click roughly at the line.
+    let best = null;
+    for (const seg of state.segments.slice(1)) {
+      const d = Math.abs(seg.start - at);
+      if (d < 0.35 && (!best || d < best.d)) best = { t: seg.start, d };
+    }
+    if (best) {
+      state.killed.push(best.t);
+      state.extra = state.extra.filter((t) => Math.abs(t - best.t) >= KILL_TOL);
+      lastSegment = null;
+      rebuild();
+    }
+    return;
+  }
+
+  if (state.beatTool === 'add') {
+    const t = clamp(at, state.tStart + 0.06, state.tEnd - 0.06);
+    if (!state.segments.some((s) => Math.abs(s.start - t) < KILL_TOL)) {
+      state.extra.push(t);
+      state.killed = state.killed.filter((k) => Math.abs(k - t) >= KILL_TOL);
+      lastSegment = null;
+      rebuild();
+    }
+    return;
+  }
+
+  const t = at;
   state.cursor = clamp(t, state.tStart, state.tEnd);
   lastSegment = null;
   if (state.playing) play(state.cursor);

@@ -37,6 +37,11 @@ export function captionAt(captions, t) {
   return captions.find((c) => t >= c.start && t < c.end) || null;
 }
 
+// Where the last caption was actually painted, in canvas pixels. The app uses
+// it to hit-test a pointer so a caption can be dragged directly in the preview.
+let lastBounds = null;
+export const captionBounds = () => lastBounds;
+
 /* --------------------------------------------------------- word model --- */
 
 /** Stable 0..1 from a string - so "random" choices don't flicker per frame. */
@@ -168,6 +173,7 @@ function rowPattern(kind, count, seed) {
  * whatever appears in the preview is what lands in the exported file.
  */
 export function drawCaptions(ctx, captions, t, W, H, style) {
+  lastBounds = null;
   const cap = captionAt(captions, t);
   if (!cap || !cap.text.trim()) return;
 
@@ -250,18 +256,21 @@ export function drawCaptions(ctx, captions, t, W, H, style) {
     style.position === 'top' ? 0.16 :
     style.position === 'middle' ? 0.5 :
     0.80;
-  // Per-line nudge, as a share of frame height - lets one caption clear the
-  // platform UI without moving every other line.
-  const anchor = H * (base + (style.offset || 0) / 100);
+  // x/y are set by dragging the caption in the preview and win over the preset
+  // position. Both are fractions of the frame so they survive a format change.
+  const centerX = style.x != null ? W * style.x : W / 2;
+  const anchor = style.y != null
+    ? H * style.y
+    : H * (base + (style.offset || 0) / 100);
   const top = anchor - block / 2 + lineH / 2;
 
   // Whole-caption pop on entry (skipped per-word modes, which pop individually).
   if (style.pop && reveal === 'all') {
     const p = Math.min(1, (t - cap.start) / 0.13);
     const s = 0.86 + 0.14 * (p * p * (3 - 2 * p));
-    ctx.translate(W / 2, anchor);
+    ctx.translate(centerX, anchor);
     ctx.scale(s, s);
-    ctx.translate(-W / 2, -anchor);
+    ctx.translate(-centerX, -anchor);
   }
 
   if (style.box) {
@@ -269,7 +278,7 @@ export function drawCaptions(ctx, captions, t, W, H, style) {
     const padX = fontPx * 0.45;
     const padY = fontPx * 0.3;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    roundRect(ctx, W / 2 - widest / 2 - padX, top - lineH / 2 - padY,
+    roundRect(ctx, centerX - widest / 2 - padX, top - lineH / 2 - padY,
       widest + padX * 2, block + padY * 2, fontPx * 0.22);
     ctx.fill();
   }
@@ -277,7 +286,7 @@ export function drawCaptions(ctx, captions, t, W, H, style) {
   // ---- draw -------------------------------------------------------------
   laidOut.forEach(({ row, widths, total, fit }, r) => {
     const y = top + r * lineH;
-    let x = W / 2 - (total * fit) / 2;
+    let x = centerX - (total * fit) / 2;
 
     row.forEach((w, i) => {
       const wpx = widths[i] * fit;
@@ -311,6 +320,16 @@ export function drawCaptions(ctx, captions, t, W, H, style) {
       x += wpx + spaceW * fit;
     });
   });
+
+  const widest = Math.max(...laidOut.map((r) => Math.min(r.total * r.fit, maxWidth)));
+  lastBounds = {
+    x: centerX - widest / 2,
+    y: top - lineH / 2,
+    w: widest,
+    h: block,
+    centerX,
+    centerY: anchor,
+  };
 
   ctx.restore();
 }

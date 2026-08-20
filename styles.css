@@ -453,7 +453,19 @@ button.wide { width: 100%; margin-top: 6px; font-size: 12px; }
   letter-spacing: 1px;
   color: var(--dim);
 }
-.tl-head .hint { text-transform: none; letter-spacing: 0; }
+.tl-head .hint { text-transform: none; letter-spacing: 0; margin-left: auto; }
+
+.beattools { display: flex; gap: 6px; text-transform: none; letter-spacing: 0; }
+.beattools button { padding: 4px 9px; font-size: 12px; }
+.tool.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* Armed tool: the waveform edits cuts instead of scrubbing. */
+.wave.arm-erase { cursor: crosshair; box-shadow: inset 0 0 0 1px var(--accent); }
+.wave.arm-add { cursor: copy; box-shadow: inset 0 0 0 1px var(--accent-2); }
 
 /* One scroller holding both lanes, so clips and captions stay aligned. */
 .tl-scroll {

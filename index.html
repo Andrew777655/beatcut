@@ -69,6 +69,11 @@
 
         <div class="tl-head">
           <span>Timeline</span>
+          <div class="beattools">
+            <button id="toolErase" class="tool" title="Click a cut on the waveform to remove it">✂ Erase beat</button>
+            <button id="toolAdd" class="tool" title="Click the waveform to add a cut">＋ Add beat</button>
+            <button id="toolReset" class="ghost" title="Undo every hand-made beat edit">Reset beats</button>
+          </div>
           <span class="hint" id="tlHint">Click a clip or a caption to edit it on its own</span>
         </div>
         <div class="tl-scroll" id="tlScroll">
@@ -120,10 +125,15 @@
             <input type="range" id="inspVol" min="0" max="200" step="5" value="100" />
           </label>
 
-          <label class="field" id="inspTrimField">
-            Start inside clip <span class="val" id="inspTrimVal">0.0s</span>
-            <input type="range" id="inspTrim" min="0" max="100" step="0.1" value="0" />
-          </label>
+          <div class="field" id="inspTrimField">
+            Adjust frame <span class="val" id="inspTrimVal">0.0s</span>
+            <input type="range" id="inspTrim" min="0" max="100" step="0.05" value="0" />
+            <div class="row">
+              <button id="inspTrimBack" class="ghost">◀ earlier</button>
+              <button id="inspTrimFwd" class="ghost">later ▶</button>
+            </div>
+            <div class="hint" id="inspTrimNote"></div>
+          </div>
 
           <label class="field">
             Zoom <span class="val" id="inspZoomVal">100%</span>
@@ -218,6 +228,10 @@
               Nudge up / down <span class="val" id="lnOffsetVal">0%</span>
               <input type="range" id="lnOffset" min="-40" max="40" step="1" value="0" />
             </label>
+            <div class="row">
+              <button id="lnFreePos" class="ghost">Recentre</button>
+            </div>
+            <p class="hint" id="lnPosNote">Drag the caption in the preview to place it anywhere.</p>
             <label class="checkline">
               <input type="checkbox" id="lnOutlineOn" checked /> Outline
             </label>

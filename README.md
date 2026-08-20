@@ -137,6 +137,12 @@ still moves it. **Back to the shared style** clears the override entirely.
 The vertical **Nudge up / down** is there for one caption that collides with the
 platform UI — lift that line clear without moving every other one.
 
+**Or just drag it.** Hover the caption in the preview and the cursor turns into a
+grab handle; drag it anywhere in the frame. The position is stored as a fraction
+of the frame, so it survives changing format. A hand-placed position overrides
+the Position dropdown and is kept when you touch the other controls — only
+**Recentre** clears it.
+
 ### Accent words
 
 **Accent words** sets what share of the longer words get the accent face — it
@@ -266,9 +272,18 @@ the normal rotation. Dragging a tile onto the block does the same thing.
 works both in the preview and in the export. Remember the global **Clip audio**
 setting has to be above zero for any of it to be audible.
 
-**Start inside clip** *(video only)* — the in-point. Use it to skip a boring first
-second, or to show a different moment of the same video in each slot it appears
-in. If the slot outlasts the clip, playback loops back to this point, not to zero.
+**Adjust frame** *(video only)* — which part of the source video this slot shows.
+The window is exactly as long as the slot, and the slider slides it through the
+whole uploaded clip, so you can pull the moment forward or back until the slot
+lands on the bit you actually want. The readout says what you're on — e.g.
+*Showing 0:02.4 → 0:02.9 of 0:12.1* — and **◀ earlier / later ▶** step it in
+quarter-seconds. The slider stops where a full slot's worth of footage remains,
+so the window can never run off the end.
+
+The same clip can therefore show a different moment in every slot it appears in.
+If the clip is shorter than the slot there's nothing to slide, and it loops
+instead — the panel says so rather than leaving you wondering why the slider
+won't move.
 
 **Effect** and **Transition in** — override the global dropdowns for this slot
 only. *Use global* follows the Look section. This is how you give one clip a
@@ -335,6 +350,23 @@ way the drum mode does — steady underneath, reacting to the vocal on top.
 
 **Fastest cut** applies to the word modes too: fast rap can put words closer
 together than you'd want a cut, and this is the floor.
+
+### Editing cuts by hand
+
+Three buttons sit above the timeline. **Erase beat** arms the waveform: click near
+a cut line and it goes, and the two clips either side merge into one longer slot.
+**Add beat** does the reverse — click anywhere on the waveform to put a cut there,
+splitting that slot in two. You don't have to be precise; the eraser takes the
+nearest cut within about a third of a second.
+
+While a tool is armed the waveform stops scrubbing, and it's outlined in the
+tool's colour so you can see it's live. Click the same button again to put it
+away.
+
+These edits sit **on top of** whatever the beat source produces, they don't
+replace it. Change the BPM, the cut rate or the beat source afterwards and the
+grid regenerates as normal with your erasures and additions still applied.
+**Reset beats** drops them and returns to the detected rhythm.
 
 **Cut on** — which drum you follow, since "where are the hits" has a different
 answer per instrument:
