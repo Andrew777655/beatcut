@@ -213,8 +213,12 @@ a track that isn't in English. Base multilingual is the default for that reason.
 turbo is better again. The cost is download size and runtime — Large is ~800 MB
 and slow without WebGPU.
 
-**Set the Language** instead of leaving it on auto-detect. Sung vocals confuse
-language detection, and a wrong guess wrecks the whole transcript.
+**Set the Language.** There is no auto-detect option and that is deliberate:
+leaving it unset does not make Whisper detect anything, it just falls back to
+English while logging *"No language specified - defaulting to English"*. That
+looked like detection and wasn't, so the choice is now explicit and defaults to
+English. On a non-English track, pick the language — a wrong one wrecks the whole
+transcript.
 
 ### If it comes back as `>> >> >>` or one phrase on repeat
 

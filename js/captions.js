@@ -701,7 +701,9 @@ export async function transcribe(audioBuffer, opts, onStatus) {
   };
   if (model.multilingual) {
     genOpts.task = 'transcribe';
-    if (language) genOpts.language = language;
+    // Always explicit. Leaving it unset does NOT auto-detect - the library just
+    // falls back to English and logs that it did, which looked like detection.
+    genOpts.language = language || 'en';
   }
 
   let result;
@@ -759,7 +761,7 @@ export async function transcribe(audioBuffer, opts, onStatus) {
       model: model.repo,
       device,
       isolated: isolate,
-      language: language || 'auto',
+      language: model.multilingual ? (language || 'en') : 'en (model is English-only)',
       windowFrom: offset,
       windowSeconds: window.duration != null ? window.duration : audioBuffer.duration,
       samples: audio.length,
